@@ -1,3 +1,105 @@
-# discord-local-scoping.patch
-# Placeholder — populated by plan 01-02 after server.ts changes are finalized.
-# This file is intentionally empty. The apply script handles a missing patch gracefully.
+--- .claude/plugins/cache/claude-plugins-official/discord/0.0.1/server.ts.orig
++++ .claude/plugins/cache/claude-plugins-official/discord/0.0.1/server.ts
+@@ -27,14 +27,49 @@
+ import { randomBytes } from 'crypto'
+ import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync } from 'fs'
+ import { homedir } from 'os'
+-import { join, sep } from 'path'
++import { join, sep, dirname } from 'path'
+ 
+ const STATE_DIR = process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'discord')
+ const ACCESS_FILE = join(STATE_DIR, 'access.json')
+ const APPROVED_DIR = join(STATE_DIR, 'approved')
+ const ENV_FILE = join(STATE_DIR, '.env')
+ 
++// discord-local-scoping patch applied
++// Resolve active access.json: project-local overrides global when present.
++// DISCORD_PROJECT_DIR is injected by Claude Code via .mcp.json env block (${CLAUDE_PROJECT_DIR}).
++const PROJECT_DIR = process.env.DISCORD_PROJECT_DIR
+ 
++function resolveAccessFile(): { path: string; scope: 'local' | 'global' } {
++  if (PROJECT_DIR) {
++    // Security: ensure resolved path is actually inside the stated project dir.
++    const candidate = join(PROJECT_DIR, '.claude', 'channels', 'discord', 'access.json')
++    if (!candidate.startsWith(PROJECT_DIR + '/') && candidate !== PROJECT_DIR) {
++      // Path traversal attempt — fall back silently.
++      process.stderr.write(`discord channel: DISCORD_PROJECT_DIR resolved outside project boundary, falling back to global\n`)
++      return { path: ACCESS_FILE, scope: 'global' }
++    }
++    try {
++      statSync(candidate)  // throws ENOENT if absent
++      return { path: candidate, scope: 'local' }
++    } catch (e) {
++      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
++        process.stderr.write(`discord channel: unexpected error stat-ing local access.json: ${e}\n`)
++      }
++      // ENOENT is normal — fall through to global
++    }
++  } else {
++    process.stderr.write(`discord channel: DISCORD_PROJECT_DIR not set — project scoping unavailable, using global config\n`)
++  }
++  return { path: ACCESS_FILE, scope: 'global' }
++}
++
++const { path: ACTIVE_ACCESS_FILE, scope: ACTIVE_SCOPE } = resolveAccessFile()
++if (ACTIVE_SCOPE === 'local') {
++  process.stderr.write(`discord channel: using local config ${ACTIVE_ACCESS_FILE}\n`)
++} else {
++  process.stderr.write(`discord channel: using global config ${ACTIVE_ACCESS_FILE}\n`)
++}
++
+ // Load ~/.claude/channels/discord/.env into process.env. Real env wins.
+ // Plugin-spawned servers don't get an env block — this is where the token lives.
+ try {
+@@ -140,7 +175,7 @@
+ 
+ function readAccessFile(): Access {
+   try {
+-    const raw = readFileSync(ACCESS_FILE, 'utf8')
++    const raw = readFileSync(ACTIVE_ACCESS_FILE, 'utf8')
+     const parsed = JSON.parse(raw) as Partial<Access>
+     return {
+       dmPolicy: parsed.dmPolicy ?? 'pairing',
+@@ -155,7 +190,13 @@
+     }
+   } catch (err) {
+     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return defaultAccess()
+-    try { renameSync(ACCESS_FILE, `${ACCESS_FILE}.corrupt-${Date.now()}`) } catch {}
++    // D-08: local access.json corrupt → error and stop (force user to fix)
++    // Global access.json corrupt → move aside and start fresh (existing behavior)
++    if (ACTIVE_SCOPE === 'local') {
++      process.stderr.write(`discord channel: local access.json is corrupt — fix or delete ${ACTIVE_ACCESS_FILE}\n`)
++      process.exit(1)
++    }
++    try { renameSync(ACTIVE_ACCESS_FILE, `${ACTIVE_ACCESS_FILE}.corrupt-${Date.now()}`) } catch {}
+     process.stderr.write(`discord: access.json is corrupt, moved aside. Starting fresh.\n`)
+     return defaultAccess()
+   }
+@@ -184,10 +225,10 @@
+ 
+ function saveAccess(a: Access): void {
+   if (STATIC) return
+-  mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
+-  const tmp = ACCESS_FILE + '.tmp'
++  mkdirSync(dirname(ACTIVE_ACCESS_FILE), { recursive: true, mode: 0o700 })
++  const tmp = ACTIVE_ACCESS_FILE + '.tmp'
+   writeFileSync(tmp, JSON.stringify(a, null, 2) + '\n', { mode: 0o600 })
+-  renameSync(tmp, ACCESS_FILE)
++  renameSync(tmp, ACTIVE_ACCESS_FILE)
+ }
+ 
+ function pruneExpired(a: Access): boolean {
+--- .claude/plugins/cache/claude-plugins-official/discord/0.0.1/.mcp.json.orig
++++ .claude/plugins/cache/claude-plugins-official/discord/0.0.1/.mcp.json
+@@ -2,7 +2,10 @@
+   "mcpServers": {
+     "discord": {
+       "command": "bun",
+-      "args": ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "--shell=bun", "--silent", "start"]
++      "args": ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "--shell=bun", "--silent", "start"],
++      "env": {
++        "DISCORD_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
++      }
+     }
+   }
+ }
