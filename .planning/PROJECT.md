@@ -12,16 +12,16 @@ Discord messages reach the correct Claude Code session based on which project di
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ `server.ts` checks for project-local access.json on startup — Phase 1
+- ✓ If local access.json exists, it completely replaces the global one (full isolation) — Phase 1
+- ✓ If no local access.json exists, fall back to global access.json (existing behavior) — Phase 1
+- ✓ Changes survive plugin cache updates via patch + SessionStart hook — Phase 1
 
 ### Active
 
 - [ ] `/discord:access group add` prompts user to choose global vs local scope
 - [ ] Choosing "local" writes to `./.claude/channels/discord/access.json` in the current project directory
 - [ ] Choosing "global" writes to `~/.claude/channels/discord/access.json` (existing behavior)
-- [ ] `server.ts` checks for project-local access.json on startup
-- [ ] If local access.json exists, it completely replaces the global one (full isolation)
-- [ ] If no local access.json exists, fall back to global access.json (existing behavior)
 - [ ] `/discord:access` (no args) shows which file is active (local vs global) and its contents
 - [ ] `/discord:access group rm` operates on the correct file based on where the group was defined
 
