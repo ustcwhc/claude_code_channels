@@ -28,11 +28,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Missing or unset `DISCORD_PROJECT_DIR` env var causes silent fallback to global, not a server crash
   4. A boot log line confirms which file (local path or global) is active, enabling debugging
   5. Changes to server.ts survive a plugin cache update (code residency strategy implemented)
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 01-01: Decide and implement code residency strategy (prevents cache wipe)
-- [ ] 01-02: Add env var injection to `.mcp.json` and `resolveAccessFile()` to server.ts
+- [ ] 01-01-PLAN.md — Patch delivery mechanism: idempotent apply script + SessionStart hook registration
+- [ ] 01-02-PLAN.md — Env var injection (.mcp.json) + resolveAccessFile() + readAccessFile/saveAccess wiring + patch generation
 
 ### Phase 2: Skill-Side Scope Awareness
 **Goal**: The `/discord:access` skill independently resolves the active config file and all writes (`group add`, `group rm`) land in the correct file
