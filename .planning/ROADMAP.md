@@ -13,7 +13,7 @@ Ship project-local Discord channel scoping in three phases: first make the MCP s
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Server-Side Scoping** - MCP server resolves project dir, loads local access.json if present, falls back to global (completed 2026-03-24)
-- [ ] **Phase 2: Skill-Side Scope Awareness** - `/discord:access` skill reads and writes the correct file with scope prompt on `group add`
+- [x] **Phase 2: Skill-Side Scope Awareness** - `/discord:access` skill reads and writes the correct file with scope prompt on `group add` (completed 2026-03-24)
 - [ ] **Phase 3: UX Polish** - `--local`/`--global` flags, full resolved path in status, duplicate-group warning
 
 ## Phase Details
@@ -49,7 +49,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md — Rewrite SKILL.md with scope resolution helper, status banner, group add scope prompt, group rm dual-file search
-- [ ] 02-02-PLAN.md — Generate SKILL.md patch hunk, append to discord-local-scoping.patch, extend apply script to check SKILL.md marker
+- [x] 02-02-PLAN.md — Generate SKILL.md patch hunk, append to discord-local-scoping.patch, extend apply script to check SKILL.md marker
 
 ### Phase 3: UX Polish
 **Goal**: Power users can bypass the scope prompt with flags, and the status output surfaces enough detail to debug routing issues
@@ -73,5 +73,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Server-Side Scoping | 2/2 | Complete   | 2026-03-24 |
-| 2. Skill-Side Scope Awareness | 0/2 | Not started | - |
+| 2. Skill-Side Scope Awareness | 2/2 | Complete   | 2026-03-24 |
 | 3. UX Polish | 0/1 | Not started | - |
