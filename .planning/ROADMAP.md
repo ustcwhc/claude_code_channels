@@ -12,7 +12,7 @@ Ship project-local Discord channel scoping in three phases: first make the MCP s
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Server-Side Scoping** - MCP server resolves project dir, loads local access.json if present, falls back to global
+- [x] **Phase 1: Server-Side Scoping** - MCP server resolves project dir, loads local access.json if present, falls back to global (completed 2026-03-24)
 - [ ] **Phase 2: Skill-Side Scope Awareness** - `/discord:access` skill reads and writes the correct file with scope prompt on `group add`
 - [ ] **Phase 3: UX Polish** - `--local`/`--global` flags, full resolved path in status, duplicate-group warning
 
@@ -31,8 +31,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Patch delivery mechanism: idempotent apply script + SessionStart hook registration
-- [ ] 01-02-PLAN.md — Env var injection (.mcp.json) + resolveAccessFile() + readAccessFile/saveAccess wiring + patch generation
+- [x] 01-01-PLAN.md — Patch delivery mechanism: idempotent apply script + SessionStart hook registration
+- [x] 01-02-PLAN.md — Env var injection (.mcp.json) + resolveAccessFile() + readAccessFile/saveAccess wiring + patch generation
 
 ### Phase 2: Skill-Side Scope Awareness
 **Goal**: The `/discord:access` skill independently resolves the active config file and all writes (`group add`, `group rm`) land in the correct file
@@ -69,6 +69,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Server-Side Scoping | 0/2 | Not started | - |
+| 1. Server-Side Scoping | 2/2 | Complete   | 2026-03-24 |
 | 2. Skill-Side Scope Awareness | 0/2 | Not started | - |
 | 3. UX Polish | 0/1 | Not started | - |

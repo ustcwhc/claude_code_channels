@@ -7,12 +7,12 @@
 
 ### Server Scoping
 
-- [ ] **SERV-01**: Server resolves project directory from `DISCORD_PROJECT_DIR` env var at startup
-- [ ] **SERV-02**: `.mcp.json` passes `${CLAUDE_PROJECT_DIR}` to server via `env` block as `DISCORD_PROJECT_DIR`
-- [ ] **SERV-03**: If `<projectDir>/.claude/channels/discord/access.json` exists, server uses it exclusively (full replacement)
-- [ ] **SERV-04**: If no local access.json exists, server falls back to `~/.claude/channels/discord/access.json` (backward compatible)
-- [ ] **SERV-05**: `saveAccess()` writes to the resolved file (local or global), not hardcoded global path
-- [ ] **SERV-06**: `approved/` and `inbox/` directories remain at global `STATE_DIR` (pairing is user-level)
+- [x] **SERV-01**: Server resolves project directory from `DISCORD_PROJECT_DIR` env var at startup
+- [x] **SERV-02**: `.mcp.json` passes `${CLAUDE_PROJECT_DIR}` to server via `env` block as `DISCORD_PROJECT_DIR`
+- [x] **SERV-03**: If `<projectDir>/.claude/channels/discord/access.json` exists, server uses it exclusively (full replacement)
+- [x] **SERV-04**: If no local access.json exists, server falls back to `~/.claude/channels/discord/access.json` (backward compatible)
+- [x] **SERV-05**: `saveAccess()` writes to the resolved file (local or global), not hardcoded global path
+- [x] **SERV-06**: `approved/` and `inbox/` directories remain at global `STATE_DIR` (pairing is user-level)
 
 ### Skill Scoping
 
@@ -32,7 +32,7 @@
 ### Resilience
 
 - [x] **RESL-01**: Changes survive plugin cache updates (code residency strategy)
-- [ ] **RESL-02**: Missing `DISCORD_PROJECT_DIR` env var gracefully falls back to global (no crash)
+- [x] **RESL-02**: Missing `DISCORD_PROJECT_DIR` env var gracefully falls back to global (no crash)
 
 ## v2 Requirements
 
@@ -56,14 +56,14 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SERV-01 | Phase 1 | Pending |
-| SERV-02 | Phase 1 | Pending |
-| SERV-03 | Phase 1 | Pending |
-| SERV-04 | Phase 1 | Pending |
-| SERV-05 | Phase 1 | Pending |
-| SERV-06 | Phase 1 | Pending |
+| SERV-01 | Phase 1 | Complete |
+| SERV-02 | Phase 1 | Complete |
+| SERV-03 | Phase 1 | Complete |
+| SERV-04 | Phase 1 | Complete |
+| SERV-05 | Phase 1 | Complete |
+| SERV-06 | Phase 1 | Complete |
 | RESL-01 | Phase 1 | Complete |
-| RESL-02 | Phase 1 | Pending |
+| RESL-02 | Phase 1 | Complete |
 | SKIL-01 | Phase 2 | Pending |
 | SKIL-02 | Phase 2 | Pending |
 | SKIL-03 | Phase 2 | Pending |
