@@ -29,8 +29,14 @@ if [[ ! -f "$SERVER_TS" ]]; then
 fi
 
 cd "$HOME"
-if patch -p0 < "$PATCH_FILE"; then
+# patch exit codes: 0 = success, 1 = some hunks failed, 2 = no patch found (empty/comment-only file)
+# Treat exit 2 as "nothing to do" — happens with placeholder patch file before 01-02 populates it.
+patch_exit=0
+patch -p0 < "$PATCH_FILE" || patch_exit=$?
+if [[ $patch_exit -eq 0 ]]; then
   echo "discord-channel: local-scoping patch applied successfully" >&2
+elif [[ $patch_exit -eq 2 ]]; then
+  echo "discord-channel: patch file contains no hunks — skipping" >&2
 else
   echo "discord-channel: patch failed — check $PATCH_FILE" >&2
   exit 1
