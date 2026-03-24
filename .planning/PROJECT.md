@@ -17,13 +17,15 @@ Discord messages reach the correct Claude Code session based on which project di
 - ✓ If no local access.json exists, fall back to global access.json (existing behavior) — Phase 1
 - ✓ Changes survive plugin cache updates via patch + SessionStart hook — Phase 1
 
+- ✓ `/discord:access group add` prompts user to choose global vs local scope — Phase 2
+- ✓ Choosing "local" writes to `./.claude/channels/discord/access.json` in the current project directory — Phase 2
+- ✓ Choosing "global" writes to `~/.claude/channels/discord/access.json` (existing behavior) — Phase 2
+- ✓ `/discord:access` (no args) shows which file is active (local vs global) and its contents — Phase 2
+- ✓ `/discord:access group rm` operates on the correct file based on where the group was defined — Phase 2
+
 ### Active
 
-- [ ] `/discord:access group add` prompts user to choose global vs local scope
-- [ ] Choosing "local" writes to `./.claude/channels/discord/access.json` in the current project directory
-- [ ] Choosing "global" writes to `~/.claude/channels/discord/access.json` (existing behavior)
-- [ ] `/discord:access` (no args) shows which file is active (local vs global) and its contents
-- [ ] `/discord:access group rm` operates on the correct file based on where the group was defined
+(Remaining items in Phase 3: `--local`/`--global` flags, full resolved path in status, duplicate group warning)
 
 ### Out of Scope
 
