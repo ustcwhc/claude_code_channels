@@ -38,29 +38,32 @@ Plans:
 **Goal**: The `/discord:access` skill independently resolves the active config file and all writes (`group add`, `group rm`) land in the correct file
 **Depends on**: Phase 1
 **Requirements**: SKIL-01, SKIL-02, SKIL-03, SKIL-04, SKIL-05, SKIL-06, SKIL-07
+**Note**: SKIL-06 (--local flag) and SKIL-07 (--global flag) are deferred to Phase 3 per user decision in 02-CONTEXT.md.
 **Success Criteria** (what must be TRUE):
   1. `/discord:access` (no args) displays "local" or "global" label indicating which file is active
   2. `/discord:access group add <channelId>` prompts the user to choose local vs global scope before writing
   3. Choosing "local" creates `.claude/channels/discord/access.json` in the project directory and adds the group there
   4. Choosing "global" adds the group to `~/.claude/channels/discord/access.json` (existing behavior, unchanged)
   5. `/discord:access group rm <channelId>` removes the group from whichever file contains it — not silently from the wrong one
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 02-01: Update SKILL.md scope resolution, status display, and `group add` scope prompt
-- [ ] 02-02: Update SKILL.md `group rm`, `pair`, and `deny` to operate on the resolved file
+- [ ] 02-01-PLAN.md — Rewrite SKILL.md with scope resolution helper, status banner, group add scope prompt, group rm dual-file search
+- [ ] 02-02-PLAN.md — Generate SKILL.md patch hunk, append to discord-local-scoping.patch, extend apply script to check SKILL.md marker
 
 ### Phase 3: UX Polish
 **Goal**: Power users can bypass the scope prompt with flags, and the status output surfaces enough detail to debug routing issues
 **Depends on**: Phase 2
-**Requirements**: UX-01, UX-02
+**Requirements**: UX-01, UX-02, SKIL-06, SKIL-07
 **Success Criteria** (what must be TRUE):
   1. `/discord:access` status shows the full absolute path of the active config file, not just "local" or "global"
   2. When the same channel group ID appears in both local and global config, a warning is shown (informational, not blocking)
+  3. `--local` flag on `group add` skips scope prompt, writes to project-local file
+  4. `--global` flag on `group add` skips scope prompt, writes to global file
 **Plans**: TBD
 
 Plans:
-- [ ] 03-01: Add full resolved path to status output and duplicate-group detection warning
+- [ ] 03-01: Add full resolved path to status output, duplicate-group detection warning, and --local/--global flags
 
 ## Progress
 
