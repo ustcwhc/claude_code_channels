@@ -31,7 +31,7 @@
 
 ### Resilience
 
-- [ ] **RESL-01**: Changes survive plugin cache updates (code residency strategy)
+- [x] **RESL-01**: Changes survive plugin cache updates (code residency strategy)
 - [ ] **RESL-02**: Missing `DISCORD_PROJECT_DIR` env var gracefully falls back to global (no crash)
 
 ## v2 Requirements
@@ -62,7 +62,7 @@
 | SERV-04 | Phase 1 | Pending |
 | SERV-05 | Phase 1 | Pending |
 | SERV-06 | Phase 1 | Pending |
-| RESL-01 | Phase 1 | Pending |
+| RESL-01 | Phase 1 | Complete |
 | RESL-02 | Phase 1 | Pending |
 | SKIL-01 | Phase 2 | Pending |
 | SKIL-02 | Phase 2 | Pending |
