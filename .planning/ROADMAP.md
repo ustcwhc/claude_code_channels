@@ -48,7 +48,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Rewrite SKILL.md with scope resolution helper, status banner, group add scope prompt, group rm dual-file search
+- [x] 02-01-PLAN.md — Rewrite SKILL.md with scope resolution helper, status banner, group add scope prompt, group rm dual-file search
 - [ ] 02-02-PLAN.md — Generate SKILL.md patch hunk, append to discord-local-scoping.patch, extend apply script to check SKILL.md marker
 
 ### Phase 3: UX Polish

@@ -16,11 +16,11 @@
 
 ### Skill Scoping
 
-- [ ] **SKIL-01**: `/discord:access` (no args) shows which file is active — full path + "local" or "global" label
-- [ ] **SKIL-02**: `/discord:access group add <channelId>` prompts user to choose local vs global scope
-- [ ] **SKIL-03**: Choosing "local" creates/writes `./.claude/channels/discord/access.json` in project directory
-- [ ] **SKIL-04**: Choosing "global" writes to `~/.claude/channels/discord/access.json` (existing behavior)
-- [ ] **SKIL-05**: `/discord:access group rm <channelId>` edits whichever file contains that channel group
+- [x] **SKIL-01**: `/discord:access` (no args) shows which file is active — full path + "local" or "global" label
+- [x] **SKIL-02**: `/discord:access group add <channelId>` prompts user to choose local vs global scope
+- [x] **SKIL-03**: Choosing "local" creates/writes `./.claude/channels/discord/access.json` in project directory
+- [x] **SKIL-04**: Choosing "global" writes to `~/.claude/channels/discord/access.json` (existing behavior)
+- [x] **SKIL-05**: `/discord:access group rm <channelId>` edits whichever file contains that channel group
 - [ ] **SKIL-06**: `--local` flag on `group add` skips scope prompt, writes to project-local file
 - [ ] **SKIL-07**: `--global` flag on `group add` skips scope prompt, writes to global file
 
@@ -64,11 +64,11 @@
 | SERV-06 | Phase 1 | Complete |
 | RESL-01 | Phase 1 | Complete |
 | RESL-02 | Phase 1 | Complete |
-| SKIL-01 | Phase 2 | Pending |
-| SKIL-02 | Phase 2 | Pending |
-| SKIL-03 | Phase 2 | Pending |
-| SKIL-04 | Phase 2 | Pending |
-| SKIL-05 | Phase 2 | Pending |
+| SKIL-01 | Phase 2 | Complete |
+| SKIL-02 | Phase 2 | Complete |
+| SKIL-03 | Phase 2 | Complete |
+| SKIL-04 | Phase 2 | Complete |
+| SKIL-05 | Phase 2 | Complete |
 | SKIL-06 | Phase 2 | Pending |
 | SKIL-07 | Phase 2 | Pending |
 | UX-01 | Phase 3 | Pending |
