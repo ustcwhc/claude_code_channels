@@ -63,7 +63,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 03-01-PLAN.md — Full resolved path in status, duplicate-group warning, --local/--global flags on group add, regenerated patch
+- [x] 03-01-PLAN.md — Full resolved path in status, duplicate-group warning, --local/--global flags on group add, regenerated patch
 
 ## Progress
 

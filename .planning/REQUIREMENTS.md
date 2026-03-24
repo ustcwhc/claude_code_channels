@@ -21,13 +21,13 @@
 - [x] **SKIL-03**: Choosing "local" creates/writes `./.claude/channels/discord/access.json` in project directory
 - [x] **SKIL-04**: Choosing "global" writes to `~/.claude/channels/discord/access.json` (existing behavior)
 - [x] **SKIL-05**: `/discord:access group rm <channelId>` edits whichever file contains that channel group
-- [ ] **SKIL-06**: `--local` flag on `group add` skips scope prompt, writes to project-local file
-- [ ] **SKIL-07**: `--global` flag on `group add` skips scope prompt, writes to global file
+- [x] **SKIL-06**: `--local` flag on `group add` skips scope prompt, writes to project-local file
+- [x] **SKIL-07**: `--global` flag on `group add` skips scope prompt, writes to global file
 
 ### UX Polish
 
-- [ ] **UX-01**: Status output shows full resolved path of active config file
-- [ ] **UX-02**: Warn when a channel group appears in both local and global config (informational only)
+- [x] **UX-01**: Status output shows full resolved path of active config file
+- [x] **UX-02**: Warn when a channel group appears in both local and global config (informational only)
 
 ### Resilience
 
@@ -69,10 +69,10 @@
 | SKIL-03 | Phase 2 | Complete |
 | SKIL-04 | Phase 2 | Complete |
 | SKIL-05 | Phase 2 | Complete |
-| SKIL-06 | Phase 2 | Pending |
-| SKIL-07 | Phase 2 | Pending |
-| UX-01 | Phase 3 | Pending |
-| UX-02 | Phase 3 | Pending |
+| SKIL-06 | Phase 2 | Complete |
+| SKIL-07 | Phase 2 | Complete |
+| UX-01 | Phase 3 | Complete |
+| UX-02 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 17 total
