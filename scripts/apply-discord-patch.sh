@@ -9,9 +9,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PATCH_FILE="$SCRIPT_DIR/../patches/discord-local-scoping.patch"
 SERVER_TS="$HOME/.claude/plugins/cache/claude-plugins-official/discord/0.0.1/server.ts"
 MARKER="// discord-local-scoping patch applied"
+SKILL_MD="$HOME/.claude/plugins/cache/claude-plugins-official/discord/0.0.1/skills/access/SKILL.md"
+SKILL_MARKER="## Scope resolution"
 
 # Already applied?
-if grep -qF "$MARKER" "$SERVER_TS" 2>/dev/null; then
+server_patched=false
+skill_patched=false
+grep -qF "$MARKER" "$SERVER_TS" 2>/dev/null && server_patched=true
+grep -qF "$SKILL_MARKER" "$SKILL_MD" 2>/dev/null && skill_patched=true
+
+if $server_patched && $skill_patched; then
   echo "discord-channel: patch already applied — skipping" >&2
   exit 0
 fi
