@@ -60,10 +60,10 @@ Plans:
   2. When the same channel group ID appears in both local and global config, a warning is shown (informational, not blocking)
   3. `--local` flag on `group add` skips scope prompt, writes to project-local file
   4. `--global` flag on `group add` skips scope prompt, writes to global file
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 03-01: Add full resolved path to status output, duplicate-group detection warning, and --local/--global flags
+- [ ] 03-01-PLAN.md — Full resolved path in status, duplicate-group warning, --local/--global flags on group add, regenerated patch
 
 ## Progress
 
