@@ -15,20 +15,34 @@ An upgrade to the [Claude Code](https://claude.com/claude-code) official Discord
 
 ## Prerequisites
 
-- [Claude Code](https://claude.com/claude-code) CLI installed
-- The official **Discord channel plugin** installed (`/install-plugin discord` or via the plugin marketplace)
-- A Discord bot token configured for the plugin
+- [Claude Code](https://claude.com/claude-code) CLI installed (v2.1.80 or later)
+- [Bun](https://bun.sh) installed
+- The official **Discord channel plugin** fully set up and working — follow the [Discord section of the Claude Code Channels guide](https://code.claude.com/docs/en/channels) to create a Discord bot, install the plugin, configure your token, and pair your account **before** applying this patch
 
 ## Installation
 
-### 1. Clone this repo
+### 1. Set up the official Discord channel plugin
+
+Follow the official guide at **https://code.claude.com/docs/en/channels** (Discord tab):
+
+1. **Create a Discord bot** — go to the [Discord Developer Portal](https://discord.com/developers/applications), create an application, and copy the bot token
+2. **Enable Message Content Intent** — in your bot's settings under Privileged Gateway Intents
+3. **Invite the bot to your server** — via OAuth2 URL Generator with `bot` scope and required permissions (View Channels, Send Messages, Read Message History, etc.)
+4. **Install the plugin** — run `/plugin install discord@claude-plugins-official` in Claude Code
+5. **Configure your token** — run `/discord:configure <token>`
+6. **Start with channels enabled** — `claude --channels plugin:discord@claude-plugins-official`
+7. **Pair your account** — DM your bot, then run `/discord:access pair <code>`
+
+Once the base Discord channel is working, proceed to install the project-local scoping patch below.
+
+### 2. Clone this repo
 
 ```bash
 git clone https://github.com/ustcwhc/claude_code_channels.git
 cd claude_code_channels
 ```
 
-### 2. Run the patch script
+### 3. Run the patch script
 
 ```bash
 ./scripts/apply-discord-patch.sh
@@ -36,7 +50,7 @@ cd claude_code_channels
 
 This applies the local-scoping patch to your installed Discord plugin (in `~/.claude/plugins/cache/`). The script is **idempotent** — safe to run multiple times.
 
-### 3. Set up the SessionStart hook
+### 4. Set up the SessionStart hook
 
 Add the following to your Claude Code settings so the patch is automatically re-applied after plugin updates:
 
@@ -82,7 +96,7 @@ Add the following to your Claude Code settings so the patch is automatically re-
 
 Replace `/path/to/claude_code_channels` with the actual path where you cloned this repo.
 
-### 4. Create a project-local access config
+### 5. Create a project-local access config
 
 In your project directory, create the local access file:
 
@@ -100,7 +114,7 @@ EOF
 
 Then use `/discord:access group add <channelId> --local` to add channels scoped to this project.
 
-### 5. Add to `.gitignore`
+### 6. Add to `.gitignore`
 
 The local access config contains Discord channel/user IDs — add it to your project's `.gitignore`:
 
