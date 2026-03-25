@@ -29,16 +29,19 @@ SKILL_MD="$PLUGIN_DIR/skills/access/SKILL.md"
 MARKER="// discord-local-scoping patch applied"
 SKILL_MARKER="## Scope resolution"
 MCP_MARKER="DISCORD_PROJECT_DIR"
+REPLY_MARKER="// quote-reply context patch applied"
 
 # Check what's already applied
 server_patched=false
 mcp_patched=false
 skill_patched=false
+reply_patched=false
 grep -qF "$MARKER" "$SERVER_TS" 2>/dev/null && server_patched=true
 grep -qF "$MCP_MARKER" "$MCP_JSON" 2>/dev/null && mcp_patched=true
 grep -qF "$SKILL_MARKER" "$SKILL_MD" 2>/dev/null && skill_patched=true
+grep -qF "$REPLY_MARKER" "$SERVER_TS" 2>/dev/null && reply_patched=true
 
-if $server_patched && $mcp_patched && $skill_patched; then
+if $server_patched && $mcp_patched && $skill_patched && $reply_patched; then
   echo "discord-channel: patch already applied to $LATEST_VERSION — skipping" >&2
   exit 0
 fi
@@ -153,6 +156,84 @@ if ! $skill_patched && [[ -f "$SKILL_MD" ]]; then
   else
     echo "discord-channel: patches/SKILL.md not found in repo — skipping SKILL.md patch" >&2
   fi
+fi
+
+# Apply quote-reply context patch — includes referenced message content in notifications
+if ! $reply_patched && [[ -f "$SERVER_TS" ]]; then
+  bun -e "
+    const fs = require('fs');
+    let src = fs.readFileSync('$SERVER_TS', 'utf8');
+
+    // Find the notification block in handleInbound and inject referenced message fetching before it.
+    // We look for the 'mcp.notification({' call that sends 'notifications/claude/channel'
+    // and wrap it with logic to fetch the referenced message.
+
+    const anchor = \"  mcp.notification({\\n    method: 'notifications/claude/channel',\";
+    if (!src.includes(anchor)) {
+      // Try alternate spacing
+      const anchor2 = \"mcp.notification({\\n    method: 'notifications/claude/channel',\";
+      if (!src.includes(anchor2)) {
+        process.stderr.write('discord-channel: could not find notification anchor for quote-reply patch — skipping\\n');
+        process.exit(0);
+      }
+    }
+
+    // Replace the notification section to add referenced message context.
+    // The original code (around the notification call):
+    //   const content = msg.content || (atts.length > 0 ? '(attachment)' : '')
+    //   mcp.notification({ method: 'notifications/claude/channel', params: { content, meta: { ... } } })
+    //
+    // We inject code between content assignment and the notification to:
+    // 1. Check msg.reference for a quoted message
+    // 2. Fetch the referenced message content
+    // 3. Add reply_to_id, reply_to_user, reply_to_content to meta
+
+    const oldContentLine = \"const content = msg.content || (atts.length > 0 ? '(attachment)' : '')\";
+    if (!src.includes(oldContentLine)) {
+      process.stderr.write('discord-channel: could not find content assignment for quote-reply patch — skipping\\n');
+      process.exit(0);
+    }
+
+    // Make handleInbound async-aware for the referenced message fetch
+    // and add the reply context fields to meta
+    const newBlock = oldContentLine + \`
+
+  // quote-reply context patch applied
+  // When the user quote-replies to a message, fetch the referenced message
+  // and include its content in the notification metadata.
+  let reply_to_id = undefined
+  let reply_to_user = undefined
+  let reply_to_content = undefined
+  if (msg.reference && msg.reference.messageId) {
+    try {
+      const refMsg = await msg.channel.messages.fetch(msg.reference.messageId)
+      reply_to_id = refMsg.id
+      reply_to_user = refMsg.author.username
+      const preview = refMsg.content.length > 500 ? refMsg.content.slice(0, 500) + '...' : refMsg.content
+      reply_to_content = preview
+    } catch (e) {
+      process.stderr.write('discord channel: failed to fetch referenced message: ' + e + '\\\\n')
+    }
+  }
+\`;
+
+    src = src.replace(oldContentLine, newBlock);
+
+    // Now add the reply fields to the meta object in the notification
+    const oldMeta = \"...(atts.length > 0 ? { attachment_count: String(atts.length), attachments: atts.join('; ') } : {}),\";
+    if (src.includes(oldMeta)) {
+      src = src.replace(
+        oldMeta,
+        oldMeta + \`
+        ...(reply_to_id ? { reply_to_id, reply_to_user, reply_to_content } : {}),\`
+      );
+    } else {
+      process.stderr.write('discord-channel: could not find meta spread for reply fields — reply context will not be included\\n');
+    }
+
+    fs.writeFileSync('$SERVER_TS', src);
+  "
+  echo "discord-channel: quote-reply context patched" >&2
 fi
 
 echo "discord-channel: patch complete for version $LATEST_VERSION" >&2
