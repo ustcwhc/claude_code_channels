@@ -6,6 +6,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGIN_BASE="$HOME/.claude/plugins/cache/claude-plugins-official/discord"
 
 # Find the latest plugin version directory
@@ -47,16 +48,12 @@ echo "discord-channel: applying local-scoping patch to $LATEST_VERSION..." >&2
 # Apply server.ts changes if needed
 if ! $server_patched && [[ -f "$SERVER_TS" ]]; then
   # Inject resolveAccessFile() after the STATE_DIR/ACCESS_FILE/APPROVED_DIR/ENV_FILE block
-  # We use a node script for reliable insertion since patch files break across versions
-  node -e "
+  # We use a bun script for reliable insertion since patch files break across versions
+  bun -e "
     const fs = require('fs');
     let src = fs.readFileSync('$SERVER_TS', 'utf8');
 
     // Add dirname import
-    src = src.replace(
-      /from 'path'/,
-      \"from 'path'\"
-    );
     if (!src.includes('dirname')) {
       src = src.replace(
         /import \{ join, sep \} from 'path'/,
@@ -66,10 +63,14 @@ if ! $server_patched && [[ -f "$SERVER_TS" ]]; then
 
     // Insert resolveAccessFile after ENV_FILE line
     const insertAfter = \"const ENV_FILE = join(STATE_DIR, '.env')\";
+    if (!src.includes(insertAfter)) {
+      process.stderr.write('discord-channel: could not find ENV_FILE anchor in server.ts — skipping server.ts patch\n');
+      process.exit(0);
+    }
     const resolveBlock = \`
 
 // discord-local-scoping patch applied
-// Project dir: try DISCORD_PROJECT_DIR first (explicit), then inherited PWD.
+// Project dir: injected via sh wrapper in .mcp.json that captures \\\$PWD before --cwd changes it.
 const PROJECT_DIR = process.env.DISCORD_PROJECT_DIR || undefined
 
 function resolveAccessFile() {
@@ -86,9 +87,6 @@ function resolveAccessFile() {
   }
   return { path: ACCESS_FILE, scope: 'global' }
 }
-
-// DEBUG: dump env for troubleshooting
-try { writeFileSync('/tmp/discord-mcp-debug.txt', 'DISCORD_PROJECT_DIR=' + (process.env.DISCORD_PROJECT_DIR ?? '(not set)') + '\\\\nPWD=' + (process.env.PWD ?? '(not set)') + '\\\\ncwd=' + process.cwd() + '\\\\nversion=$LATEST_VERSION\\\\n') } catch {}
 
 const { path: ACTIVE_ACCESS_FILE, scope: ACTIVE_SCOPE } = resolveAccessFile()
 if (ACTIVE_SCOPE === 'local') {
@@ -132,7 +130,7 @@ fi
 
 # Apply .mcp.json changes if needed
 if ! $mcp_patched && [[ -f "$MCP_JSON" ]]; then
-  node -e "
+  bun -e "
     const fs = require('fs');
     const mcp = JSON.parse(fs.readFileSync('$MCP_JSON', 'utf8'));
     const discord = mcp.mcpServers.discord;
@@ -146,7 +144,15 @@ if ! $mcp_patched && [[ -f "$MCP_JSON" ]]; then
   echo "discord-channel: .mcp.json patched" >&2
 fi
 
-# Note: SKILL.md patching skipped in this version — requires full rewrite
-# which is better done via /gsd:execute-phase
+# Apply SKILL.md changes if needed — copy full patched version from repo
+if ! $skill_patched && [[ -f "$SKILL_MD" ]]; then
+  PATCHED_SKILL="$REPO_DIR/patches/SKILL.md"
+  if [[ -f "$PATCHED_SKILL" ]]; then
+    cp "$PATCHED_SKILL" "$SKILL_MD"
+    echo "discord-channel: SKILL.md patched" >&2
+  else
+    echo "discord-channel: patches/SKILL.md not found in repo — skipping SKILL.md patch" >&2
+  fi
+fi
 
 echo "discord-channel: patch complete for version $LATEST_VERSION" >&2

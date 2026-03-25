@@ -61,11 +61,11 @@ Add the following to your Claude Code settings so the patch is automatically re-
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "/path/to/claude_code_channels/scripts/apply-discord-patch.sh"
+            "command": "/path/to/claude_code_channels/scripts/apply-discord-patch.sh",
+            "timeout": 15
           }
         ]
       }
@@ -74,18 +74,18 @@ Add the following to your Claude Code settings so the patch is automatically re-
 }
 ```
 
-**Option B: Global** — add to `~/.claude/settings.json` to apply across all projects:
+**Option B: Global (recommended)** — add to `~/.claude/settings.json` to apply across all projects:
 
 ```json
 {
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "/path/to/claude_code_channels/scripts/apply-discord-patch.sh"
+            "command": "/path/to/claude_code_channels/scripts/apply-discord-patch.sh",
+            "timeout": 15
           }
         ]
       }
@@ -94,7 +94,9 @@ Add the following to your Claude Code settings so the patch is automatically re-
 }
 ```
 
-Replace `/path/to/claude_code_channels` with the actual path where you cloned this repo.
+Replace `/path/to/claude_code_channels` with the actual absolute path where you cloned this repo.
+
+> **Note:** If you already have a `SessionStart` hook in your settings, add the new hook entry to the existing `"hooks"` array rather than replacing it.
 
 ### 5. Create a project-local access config
 
@@ -141,7 +143,8 @@ DM-related commands (`pair`, `deny`, `allow`, `remove`, `policy`) always operate
 ```
 claude_code_channels/
 ├── patches/
-│   └── discord-local-scoping.patch    # Unified diff for server.ts, .mcp.json, SKILL.md
+│   ├── discord-local-scoping.patch    # Unified diff for reference (server.ts, .mcp.json, SKILL.md)
+│   └── SKILL.md                       # Full patched access skill with scope-awareness
 ├── scripts/
 │   └── apply-discord-patch.sh         # Idempotent apply script (SessionStart hook target)
 ├── CLAUDE.md                          # Project config for Claude Code sessions
