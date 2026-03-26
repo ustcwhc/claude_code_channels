@@ -52,9 +52,9 @@ fi
 # Build JSON payload safely using jq to avoid injection from dir names
 PAYLOAD=$(jq -nc --arg c "session started — listening on **${PROJECT_NAME}**" '{content: $c}')
 
-# Send greeting to each channel — bounded delay per call, no orphan processes
+# Send greeting to each channel — curl --max-time for bounded delay (works on macOS + Linux)
 while IFS= read -r CHANNEL_ID; do
-  timeout 5 curl -sf -X POST \
+  curl -sf --max-time 5 -X POST \
     "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \
     -H "Authorization: Bot $TOKEN" \
     -H "Content-Type: application/json" \
