@@ -31,39 +31,45 @@ fi
 # --- 2. Remove SessionStart hooks from settings.json ---
 if [[ -f "$SETTINGS" ]]; then
   # Remove hook entries that reference this repo's scripts
-  updated=$(python3 -c "
+  updated=$(python3 - "$SETTINGS" "$REPO_DIR" <<'PYEOF'
 import json, sys
 
-with open('$SETTINGS') as f:
+settings_path = sys.argv[1]
+repo_dir = sys.argv[2]
+
+with open(settings_path) as f:
     settings = json.load(f)
 
-repo_dir = '$REPO_DIR'
-changed = False
+hooks = settings.get('hooks', {})
+if 'SessionStart' not in hooks:
+    sys.exit(1)
 
-session_start = settings.get('hooks', {}).get('SessionStart', [])
+changed = False
+session_start = hooks['SessionStart']
 for group in session_start:
-    hooks = group.get('hooks', [])
-    original_len = len(hooks)
+    hook_list = group.get('hooks', [])
+    original_len = len(hook_list)
     group['hooks'] = [
-        h for h in hooks
+        h for h in hook_list
         if repo_dir not in h.get('command', '')
     ]
     if len(group['hooks']) != original_len:
         changed = True
 
 # Remove empty hook groups
-settings['hooks']['SessionStart'] = [
+hooks['SessionStart'] = [
     g for g in session_start if g.get('hooks')
 ]
 # Remove empty SessionStart if no groups left
-if not settings['hooks']['SessionStart']:
-    del settings['hooks']['SessionStart']
+if not hooks['SessionStart']:
+    del hooks['SessionStart']
 
 if changed:
     print(json.dumps(settings, indent=2))
 else:
     sys.exit(1)
-" 2>/dev/null)
+PYEOF
+)
 
   if [[ $? -eq 0 && -n "$updated" ]]; then
     echo "$updated" > "$SETTINGS"
