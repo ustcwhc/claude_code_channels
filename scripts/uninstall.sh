@@ -13,6 +13,7 @@ SETTINGS="$HOME/.claude/settings.json"
 echo "claude-code-channels: uninstalling..." >&2
 
 # --- 1. Remove patched plugin version directories ---
+patch_found=false
 if [[ -d "$PLUGIN_BASE" ]]; then
   for version_dir in "$PLUGIN_BASE"/*/; do
     [[ -d "$version_dir" ]] || continue
@@ -20,17 +21,23 @@ if [[ -d "$PLUGIN_BASE" ]]; then
     if grep -qF "discord-local-scoping patch applied" "$server_ts" 2>/dev/null; then
       version=$(basename "$version_dir")
       rm -rf "$version_dir"
-      echo "claude-code-channels: removed patched plugin version $version" >&2
+      patch_found=true
+      echo "claude-code-channels: discord patch — uninstalled (removed version $version)" >&2
       echo "  (Claude Code will re-download a clean copy on next start with --channels)" >&2
     fi
   done
-else
-  echo "claude-code-channels: plugin not installed — nothing to remove" >&2
+fi
+if ! $patch_found; then
+  if [[ -d "$PLUGIN_BASE" ]]; then
+    echo "claude-code-channels: discord patch — not installed, nothing to remove" >&2
+  else
+    echo "claude-code-channels: discord patch — plugin not present, nothing to remove" >&2
+  fi
 fi
 
 # --- 2. Remove SessionStart hooks from settings.json ---
+hooks_found=false
 if [[ -f "$SETTINGS" ]]; then
-  # Remove hook entries that reference this repo's scripts
   updated=$(python3 - "$SETTINGS" "$REPO_DIR" <<'PYEOF'
 import json, sys
 
@@ -69,18 +76,23 @@ if changed:
 else:
     sys.exit(1)
 PYEOF
-)
+  ) && python_exit=0 || python_exit=$?
 
-  if [[ $? -eq 0 && -n "$updated" ]]; then
+  if [[ $python_exit -eq 0 && -n "$updated" ]]; then
     echo "$updated" > "$SETTINGS"
-    echo "claude-code-channels: removed SessionStart hooks from settings.json" >&2
+    hooks_found=true
+    echo "claude-code-channels: SessionStart hooks — uninstalled" >&2
   else
-    echo "claude-code-channels: no hooks found in settings.json — skipping" >&2
+    echo "claude-code-channels: SessionStart hooks — not installed, nothing to remove" >&2
   fi
 else
-  echo "claude-code-channels: settings.json not found — skipping" >&2
+  echo "claude-code-channels: SessionStart hooks — settings.json not found, nothing to remove" >&2
 fi
 
-echo "claude-code-channels: uninstall complete" >&2
+if ! $patch_found && ! $hooks_found; then
+  echo "claude-code-channels: nothing was installed — nothing to uninstall" >&2
+else
+  echo "claude-code-channels: uninstall complete" >&2
+fi
 echo "  Restart Claude Code to pick up changes." >&2
 echo "  Project-local access.json files (if any) are left in place." >&2
