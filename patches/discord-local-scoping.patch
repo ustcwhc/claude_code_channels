@@ -14,7 +14,7 @@
  
 +// discord-local-scoping patch applied
 +// Resolve active access.json: project-local overrides global when present.
-+// DISCORD_PROJECT_DIR is injected by Claude Code via .mcp.json env block (${PWD}).
++// DISCORD_PROJECT_DIR is injected by Claude Code via .mcp.json env block (${CLAUDE_PROJECT_DIR}).
 +const PROJECT_DIR = process.env.DISCORD_PROJECT_DIR
  
 +function resolveAccessFile(): { path: string; scope: 'local' | 'global' } {
@@ -98,7 +98,7 @@
 -      "args": ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "--shell=bun", "--silent", "start"]
 +      "args": ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "--shell=bun", "--silent", "start"],
 +      "env": {
-+        "DISCORD_PROJECT_DIR": "${PWD}"
++        "DISCORD_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
 +      }
      }
    }

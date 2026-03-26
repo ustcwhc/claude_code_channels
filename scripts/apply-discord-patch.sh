@@ -73,7 +73,7 @@ if ! $server_patched && [[ -f "$SERVER_TS" ]]; then
     const resolveBlock = \`
 
 // discord-local-scoping patch applied
-// Project dir: injected via sh wrapper in .mcp.json that captures \\\$PWD before --cwd changes it.
+// Project dir: injected via .mcp.json env block using CLAUDE_PROJECT_DIR variable substitution.
 const PROJECT_DIR = process.env.DISCORD_PROJECT_DIR || undefined
 
 function resolveAccessFile() {
@@ -126,6 +126,32 @@ if (ACTIVE_SCOPE === 'local') {
       'renameSync(tmp, ACTIVE_ACCESS_FILE)'
     );
 
+    // Log listening channels on ready and send greeting
+    src = src.replace(
+      /client\.once\('ready', c => \{\s*\n\s*process\.stderr\.write\(\`discord channel: gateway connected as \$\{c\.user\.tag\}\\\\n\`\)\s*\n\s*\}\)/,
+      \`client.once('ready', async c => {
+  process.stderr.write(\\\`discord channel: gateway connected as \\\${c.user.tag}\\\\n\\\`)
+  const access = loadAccess()
+  const groupIds = Object.keys(access.groups)
+  if (groupIds.length > 0) {
+    process.stderr.write(\\\`discord channel: listening to \\\${groupIds.length} channel(s): \\\${groupIds.join(', ')}\\\\n\\\`)
+    const projectName = PROJECT_DIR ? PROJECT_DIR.split('/').pop() : 'unknown project'
+    for (const id of groupIds) {
+      try {
+        const ch = await client.channels.fetch(id)
+        if (ch && ch.isTextBased() && 'send' in ch) {
+          await (ch as any).send(\\\`session started — listening on **\\\${projectName}**\\\`)
+        }
+      } catch (e) {
+        process.stderr.write(\\\`discord channel: failed to greet \\\${id}: \\\${e}\\\\n\\\`)
+      }
+    }
+  } else {
+    process.stderr.write(\\\`discord channel: no group channels configured\\\\n\\\`)
+  }
+})\`
+    );
+
     fs.writeFileSync('$SERVER_TS', src);
   "
   echo "discord-channel: server.ts patched" >&2
@@ -137,11 +163,11 @@ if ! $mcp_patched && [[ -f "$MCP_JSON" ]]; then
     const fs = require('fs');
     const mcp = JSON.parse(fs.readFileSync('$MCP_JSON', 'utf8'));
     const discord = mcp.mcpServers.discord;
-    // Use sh wrapper to capture PWD before --cwd changes it
-    const pluginRoot = '\${CLAUDE_PLUGIN_ROOT}';
-    discord.command = 'sh';
-    discord.args = ['-c', 'DISCORD_PROJECT_DIR=\$PWD exec bun run --cwd \\'' + pluginRoot + '\\' --shell=bun --silent start'];
-    delete discord.env;
+    // Use CLAUDE_PROJECT_DIR env var substitution — Claude Code expands this
+    // before launching the process, so it's reliable regardless of cwd changes.
+    discord.command = 'bun';
+    discord.args = ['run', '--cwd', '\${CLAUDE_PLUGIN_ROOT}', '--shell=bun', '--silent', 'start'];
+    discord.env = { DISCORD_PROJECT_DIR: '\${CLAUDE_PROJECT_DIR}' };
     fs.writeFileSync('$MCP_JSON', JSON.stringify(mcp, null, 2) + '\\n');
   "
   echo "discord-channel: .mcp.json patched" >&2
