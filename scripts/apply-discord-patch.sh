@@ -56,11 +56,16 @@ if ! $server_patched && [[ -f "$SERVER_TS" ]]; then
     const fs = require('fs');
     let src = fs.readFileSync('$SERVER_TS', 'utf8');
 
-    // Add dirname import
+    // Add dirname/basename import
     if (!src.includes('dirname')) {
       src = src.replace(
         /import \{ join, sep \} from 'path'/,
-        \"import { join, sep, dirname } from 'path'\"
+        \"import { join, sep, dirname, basename } from 'path'\"
+      );
+    } else if (!src.includes('basename')) {
+      src = src.replace(
+        /import \{ join, sep, dirname \} from 'path'/,
+        \"import { join, sep, dirname, basename } from 'path'\"
       );
     }
 
@@ -126,7 +131,7 @@ if (ACTIVE_SCOPE === 'local') {
       'renameSync(tmp, ACTIVE_ACCESS_FILE)'
     );
 
-    // Log listening channels on ready
+    // Log listening channels on ready + send greeting to configured channels
     src = src.replace(
       /client\.once\('ready', c => \{\s*\n\s*process\.stderr\.write\(\`discord channel: gateway connected as \$\{c\.user\.tag\}\\\\n\`\)\s*\n\s*\}\)/,
       \`client.once('ready', c => {
@@ -135,6 +140,13 @@ if (ACTIVE_SCOPE === 'local') {
   const groupIds = Object.keys(access.groups)
   if (groupIds.length > 0) {
     process.stderr.write(\\\`discord channel: listening to \\\${groupIds.length} channel(s): \\\${groupIds.join(', ')}\\\\n\\\`)
+    // Send session greeting to each configured channel
+    const projectName = PROJECT_DIR ? basename(PROJECT_DIR) : 'unknown project'
+    for (const chId of groupIds) {
+      c.channels.fetch(chId).then(ch => {
+        if (ch && ch.isTextBased()) ch.send(\\\`session started — listening on **\\\${projectName}**\\\`)
+      }).catch(e => process.stderr.write(\\\`discord channel: failed to send greeting to \\\${chId}: \\\${e}\\\\n\\\`))
+    }
   } else {
     process.stderr.write(\\\`discord channel: no group channels configured\\\\n\\\`)
   }

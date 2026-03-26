@@ -48,9 +48,10 @@ cd claude_code_channels
 ./scripts/install.sh
 ```
 
-This applies the local-scoping patch to the Discord plugin and registers two SessionStart hooks in `~/.claude/settings.json`:
+This applies the local-scoping patch to the Discord plugin and registers a SessionStart hook in `~/.claude/settings.json`:
 - **apply-discord-patch.sh** — re-applies the patch after plugin updates
-- **discord-session-greeting.sh** — sends a greeting to your Discord channels when a session starts
+
+Session greetings are sent automatically by the patched `server.ts` when the Discord gateway connects — this only happens when `--channels plugin:discord@claude-plugins-official` is active.
 
 The script is **idempotent** — safe to run multiple times. It appends to your existing hooks without replacing them.
 
@@ -97,7 +98,7 @@ claude_code_channels/
 │   ├── install.sh                     # One-command install (patch + hooks)
 │   ├── uninstall.sh                   # Removes patches and hooks
 │   ├── apply-discord-patch.sh         # Idempotent patch script (SessionStart hook target)
-│   └── discord-session-greeting.sh    # Sends greeting to Discord channels on session start
+│   └── discord-session-greeting.sh    # Legacy no-op (greeting now in server.ts)
 ├── CLAUDE.md                          # Project config for Claude Code sessions
 └── README.md
 ```
