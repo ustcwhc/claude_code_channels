@@ -30,18 +30,21 @@ MARKER="// discord-local-scoping patch applied"
 SKILL_MARKER="## Scope resolution"
 MCP_MARKER="DISCORD_PROJECT_DIR"
 REPLY_MARKER="// quote-reply context patch applied"
+GREETING_MARKER="// session-greeting patch applied"
 
 # Check what's already applied
 server_patched=false
 mcp_patched=false
 skill_patched=false
 reply_patched=false
+greeting_patched=false
 grep -qF "$MARKER" "$SERVER_TS" 2>/dev/null && server_patched=true
 grep -qF "$MCP_MARKER" "$MCP_JSON" 2>/dev/null && mcp_patched=true
 grep -qF "$SKILL_MARKER" "$SKILL_MD" 2>/dev/null && skill_patched=true
 grep -qF "$REPLY_MARKER" "$SERVER_TS" 2>/dev/null && reply_patched=true
+grep -qF "$GREETING_MARKER" "$SERVER_TS" 2>/dev/null && greeting_patched=true
 
-if $server_patched && $mcp_patched && $skill_patched && $reply_patched; then
+if $server_patched && $mcp_patched && $skill_patched && $reply_patched && $greeting_patched; then
   echo "discord-channel: patch already applied to $LATEST_VERSION — skipping" >&2
   exit 0
 fi
@@ -129,28 +132,6 @@ if (ACTIVE_SCOPE === 'local') {
     src = src.replace(
       /renameSync\(tmp, ACCESS_FILE\)/,
       'renameSync(tmp, ACTIVE_ACCESS_FILE)'
-    );
-
-    // Log listening channels on ready + send greeting to configured channels
-    src = src.replace(
-      /client\.once\('ready', c => \{\s*\n\s*process\.stderr\.write\(\`discord channel: gateway connected as \$\{c\.user\.tag\}\\\\n\`\)\s*\n\s*\}\)/,
-      \`client.once('ready', c => {
-  process.stderr.write(\\\`discord channel: gateway connected as \\\${c.user.tag}\\\\n\\\`)
-  const access = loadAccess()
-  const groupIds = Object.keys(access.groups)
-  if (groupIds.length > 0) {
-    process.stderr.write(\\\`discord channel: listening to \\\${groupIds.length} channel(s): \\\${groupIds.join(', ')}\\\\n\\\`)
-    // Send session greeting to each configured channel
-    const projectName = PROJECT_DIR ? basename(PROJECT_DIR) : 'unknown project'
-    for (const chId of groupIds) {
-      c.channels.fetch(chId).then(ch => {
-        if (ch && ch.isTextBased()) ch.send(\\\`session started — listening on **\\\${projectName}**\\\`)
-      }).catch(e => process.stderr.write(\\\`discord channel: failed to send greeting to \\\${chId}: \\\${e}\\\\n\\\`))
-    }
-  } else {
-    process.stderr.write(\\\`discord channel: no group channels configured\\\\n\\\`)
-  }
-})\`
     );
 
     fs.writeFileSync('$SERVER_TS', src);
@@ -261,6 +242,42 @@ if ! $reply_patched && [[ -f "$SERVER_TS" ]]; then
     fs.writeFileSync('$SERVER_TS', src);
   "
   echo "discord-channel: quote-reply context patched" >&2
+fi
+
+# Apply session greeting patch — sends greeting to configured channels on ready
+if ! $greeting_patched && [[ -f "$SERVER_TS" ]]; then
+  bun -e "
+    const fs = require('fs');
+    let src = fs.readFileSync('$SERVER_TS', 'utf8');
+
+    const regex = /client\.once\('ready', c => \{\s*\n\s*process\.stderr\.write\(\x60discord channel: gateway connected as \\\$\{c\.user\.tag\}\\\\n\x60\)\s*\n\s*\}\)/;
+
+    if (!regex.test(src)) {
+      process.stderr.write('discord-channel: could not find ready handler for greeting patch — skipping\n');
+      process.exit(0);
+    }
+
+    src = src.replace(regex, \`client.once('ready', c => {
+  // session-greeting patch applied
+  process.stderr.write(\\\`discord channel: gateway connected as \\\${c.user.tag}\\\\n\\\`)
+  const access = loadAccess()
+  const groupIds = Object.keys(access.groups)
+  if (groupIds.length > 0) {
+    process.stderr.write(\\\`discord channel: listening to \\\${groupIds.length} channel(s): \\\${groupIds.join(', ')}\\\\n\\\`)
+    const projectName = PROJECT_DIR ? basename(PROJECT_DIR) : 'unknown project'
+    for (const chId of groupIds) {
+      c.channels.fetch(chId).then(ch => {
+        if (ch && ch.isTextBased()) ch.send(\\\`session started — listening on **\\\${projectName}**\\\`)
+      }).catch(e => process.stderr.write(\\\`discord channel: failed to send greeting to \\\${chId}: \\\${e}\\\\n\\\`))
+    }
+  } else {
+    process.stderr.write(\\\`discord channel: no group channels configured\\\\n\\\`)
+  }
+})\`);
+
+    fs.writeFileSync('$SERVER_TS', src);
+  "
+  echo "discord-channel: session greeting patched" >&2
 fi
 
 echo "discord-channel: patch complete for version $LATEST_VERSION" >&2
