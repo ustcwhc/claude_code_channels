@@ -126,26 +126,15 @@ if (ACTIVE_SCOPE === 'local') {
       'renameSync(tmp, ACTIVE_ACCESS_FILE)'
     );
 
-    // Log listening channels on ready and send greeting
+    // Log listening channels on ready
     src = src.replace(
       /client\.once\('ready', c => \{\s*\n\s*process\.stderr\.write\(\`discord channel: gateway connected as \$\{c\.user\.tag\}\\\\n\`\)\s*\n\s*\}\)/,
-      \`client.once('ready', async c => {
+      \`client.once('ready', c => {
   process.stderr.write(\\\`discord channel: gateway connected as \\\${c.user.tag}\\\\n\\\`)
   const access = loadAccess()
   const groupIds = Object.keys(access.groups)
   if (groupIds.length > 0) {
     process.stderr.write(\\\`discord channel: listening to \\\${groupIds.length} channel(s): \\\${groupIds.join(', ')}\\\\n\\\`)
-    const projectName = PROJECT_DIR ? PROJECT_DIR.split('/').pop() : 'unknown project'
-    for (const id of groupIds) {
-      try {
-        const ch = await client.channels.fetch(id)
-        if (ch && ch.isTextBased() && 'send' in ch) {
-          await (ch as any).send(\\\`session started — listening on **\\\${projectName}**\\\`)
-        }
-      } catch (e) {
-        process.stderr.write(\\\`discord channel: failed to greet \\\${id}: \\\${e}\\\\n\\\`)
-      }
-    }
   } else {
     process.stderr.write(\\\`discord channel: no group channels configured\\\\n\\\`)
   }
