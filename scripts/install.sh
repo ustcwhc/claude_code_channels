@@ -33,10 +33,10 @@ fi
 
 # Check if hooks are already registered
 if [[ -f "$SETTINGS" ]]; then
-  hooks_was_installed=$(python3 -c "
+  hooks_was_installed=$(python3 - "$SETTINGS" <<'PYEOF'
 import json, sys
 try:
-    with open('$SETTINGS') as f:
+    with open(sys.argv[1]) as f:
         settings = json.load(f)
     hooks = settings.get('hooks', {})
     for group in hooks.get('SessionStart', []):
@@ -47,7 +47,8 @@ try:
 except Exception:
     pass
 print('false')
-" 2>/dev/null) || hooks_was_installed=false
+PYEOF
+  ) || hooks_was_installed=false
 fi
 
 if $patch_was_installed && [[ "$hooks_was_installed" == "true" ]]; then
@@ -56,17 +57,14 @@ if $patch_was_installed && [[ "$hooks_was_installed" == "true" ]]; then
 fi
 
 # --- 1. Apply the discord patch ---
-patch_installed_now=false
 if $patch_was_installed; then
   echo "claude-code-channels: discord patch — already installed" >&2
 else
   bash "$SCRIPT_DIR/apply-discord-patch.sh"
-  patch_installed_now=true
   echo "claude-code-channels: discord patch — installed" >&2
 fi
 
 # --- 2. Add SessionStart hooks to settings.json ---
-hooks_installed_now=false
 if [[ "$hooks_was_installed" == "true" ]]; then
   echo "claude-code-channels: SessionStart hooks — already installed" >&2
 else
@@ -105,6 +103,14 @@ for group in session_start:
         if 'discord-session-greeting.sh' not in h.get('command', '')
     ]
 
+# Guard against duplicates (defensive — bash pre-flight should prevent this path,
+# but protects against race conditions or pre-flight check failures)
+all_commands = []
+for group in session_start:
+    all_commands.extend(h.get('command', '') for h in group.get('hooks', []))
+if any('apply-discord-patch.sh' in c for c in all_commands):
+    sys.exit(0)
+
 # Add to first group, or create one
 if not session_start:
     session_start.append({"hooks": []})
@@ -120,7 +126,6 @@ PYEOF
     exit 1
   elif [[ -n "$updated" ]]; then
     echo "$updated" > "$SETTINGS"
-    hooks_installed_now=true
     echo "claude-code-channels: SessionStart hooks — installed" >&2
   fi
 fi

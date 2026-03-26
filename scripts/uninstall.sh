@@ -44,8 +44,12 @@ import json, sys
 settings_path = sys.argv[1]
 repo_dir = sys.argv[2]
 
-with open(settings_path) as f:
-    settings = json.load(f)
+try:
+    with open(settings_path) as f:
+        settings = json.load(f)
+except (json.JSONDecodeError, OSError) as e:
+    print(f"PARSE_ERROR: {e}", file=sys.stderr)
+    sys.exit(2)
 
 hooks = settings.get('hooks', {})
 if 'SessionStart' not in hooks:
@@ -78,7 +82,10 @@ else:
 PYEOF
   ) && python_exit=0 || python_exit=$?
 
-  if [[ $python_exit -eq 0 && -n "$updated" ]]; then
+  if [[ $python_exit -eq 2 ]]; then
+    echo "claude-code-channels: ERROR — failed to parse $SETTINGS" >&2
+    exit 1
+  elif [[ $python_exit -eq 0 && -n "$updated" ]]; then
     echo "$updated" > "$SETTINGS"
     hooks_found=true
     echo "claude-code-channels: SessionStart hooks — uninstalled" >&2
