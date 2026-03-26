@@ -146,10 +146,19 @@ claude_code_channels/
 │   └── SKILL.md                       # Full patched access skill with scope-awareness
 ├── scripts/
 │   ├── apply-discord-patch.sh         # Idempotent apply script (SessionStart hook target)
-│   └── discord-session-greeting.sh    # Sends greeting to Discord channels on session start
+│   ├── discord-session-greeting.sh    # Sends greeting to Discord channels on session start
+│   └── uninstall.sh                   # Removes patches and hooks
 ├── CLAUDE.md                          # Project config for Claude Code sessions
 └── README.md
 ```
+
+## Uninstall
+
+```bash
+./scripts/uninstall.sh
+```
+
+This removes the patched plugin files (Claude Code re-downloads clean copies on next start) and removes the SessionStart hooks from `~/.claude/settings.json`. Project-local `access.json` files are left in place.
 
 ## Constraints
 
