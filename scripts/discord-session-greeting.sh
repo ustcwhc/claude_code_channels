@@ -8,7 +8,7 @@ set -euo pipefail
 ENV_FILE="$HOME/.claude/channels/discord/.env"
 GLOBAL_ACCESS="$HOME/.claude/channels/discord/access.json"
 
-# Load bot token
+# Load bot token — sources a user-owned file in ~/.claude/ (trusted path)
 if [[ ! -f "$ENV_FILE" ]]; then
   exit 0
 fi
@@ -49,15 +49,15 @@ else
   PROJECT_NAME="unknown project"
 fi
 
-# Send greeting to each channel
+# Build JSON payload safely using jq to avoid injection from dir names
+PAYLOAD=$(jq -nc --arg c "session started — listening on **${PROJECT_NAME}**" '{content: $c}')
+
+# Send greeting to each channel — bounded delay per call, no orphan processes
 while IFS= read -r CHANNEL_ID; do
-  curl -sf -X POST \
+  timeout 5 curl -sf -X POST \
     "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \
     -H "Authorization: Bot $TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"content\": \"session started — listening on **${PROJECT_NAME}**\"}" \
-    >/dev/null 2>&1 &
+    -d "$PAYLOAD" \
+    >/dev/null 2>&1 || true
 done <<< "$CHANNEL_IDS"
-
-# Don't block session startup — fire and forget
-wait
