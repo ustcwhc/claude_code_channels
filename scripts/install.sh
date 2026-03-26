@@ -38,11 +38,6 @@ patch_hook = {
     "command": f'bash "{repo_dir}/scripts/apply-discord-patch.sh"',
     "timeout": 15
 }
-greeting_hook = {
-    "type": "command",
-    "command": f'bash "{repo_dir}/scripts/discord-session-greeting.sh"',
-    "timeout": 10
-}
 
 hooks = settings.setdefault('hooks', {})
 session_start = hooks.setdefault('SessionStart', [])
@@ -53,9 +48,20 @@ for group in session_start:
     all_commands.extend(h.get('command', '') for h in group.get('hooks', []))
 
 has_patch = any('apply-discord-patch.sh' in c for c in all_commands)
-has_greeting = any('discord-session-greeting.sh' in c for c in all_commands)
 
-if has_patch and has_greeting:
+# Remove legacy greeting hook if present (greeting now handled by server.ts)
+changed = False
+for group in session_start:
+    hook_list = group.get('hooks', [])
+    original_len = len(hook_list)
+    group['hooks'] = [
+        h for h in hook_list
+        if 'discord-session-greeting.sh' not in h.get('command', '')
+    ]
+    if len(group['hooks']) != original_len:
+        changed = True
+
+if has_patch and not changed:
     # Already fully installed — signal no-change with empty output
     sys.exit(0)
 
@@ -66,8 +72,6 @@ hook_list = session_start[0].setdefault('hooks', [])
 
 if not has_patch:
     hook_list.append(patch_hook)
-if not has_greeting:
-    hook_list.append(greeting_hook)
 
 print(json.dumps(settings, indent=2))
 PYEOF
