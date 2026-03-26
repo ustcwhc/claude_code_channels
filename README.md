@@ -54,7 +54,7 @@ This applies the local-scoping patch to the Discord plugin and registers two Ses
 
 The script is **idempotent** — safe to run multiple times. It appends to your existing hooks without replacing them.
 
-### 5. Add channels to a project
+### 4. Add channels to a project
 
 From a Claude Code session in your project directory, run:
 
@@ -64,7 +64,7 @@ From a Claude Code session in your project directory, run:
 
 This creates the project-local config (`.claude/channels/discord/access.json`) automatically and adds the channel to it. You can also omit `--local` and the skill will prompt you to choose local vs global.
 
-### 6. Add to `.gitignore`
+### 5. Add to `.gitignore`
 
 The local access config contains Discord channel/user IDs — add it to your project's `.gitignore`:
 

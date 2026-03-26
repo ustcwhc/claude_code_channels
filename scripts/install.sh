@@ -26,8 +26,12 @@ import json, sys
 settings_path = sys.argv[1]
 repo_dir = sys.argv[2]
 
-with open(settings_path) as f:
-    settings = json.load(f)
+try:
+    with open(settings_path) as f:
+        settings = json.load(f)
+except (json.JSONDecodeError, OSError) as e:
+    print(f"PARSE_ERROR: {e}", file=sys.stderr)
+    sys.exit(2)
 
 patch_hook = {
     "type": "command",
@@ -43,32 +47,36 @@ greeting_hook = {
 hooks = settings.setdefault('hooks', {})
 session_start = hooks.setdefault('SessionStart', [])
 
-# Find the first hook group, or create one
+# Check across ALL hook groups for existing entries (mirrors uninstall.sh)
+all_commands = []
+for group in session_start:
+    all_commands.extend(h.get('command', '') for h in group.get('hooks', []))
+
+has_patch = any('apply-discord-patch.sh' in c for c in all_commands)
+has_greeting = any('discord-session-greeting.sh' in c for c in all_commands)
+
+if has_patch and has_greeting:
+    # Already fully installed — signal no-change with empty output
+    sys.exit(0)
+
+# Add to first group, or create one
 if not session_start:
     session_start.append({"hooks": []})
-group = session_start[0]
-hook_list = group.setdefault('hooks', [])
+hook_list = session_start[0].setdefault('hooks', [])
 
-# Check if already installed (by matching command substring)
-existing_commands = [h.get('command', '') for h in hook_list]
-changed = False
-
-if not any('apply-discord-patch.sh' in c for c in existing_commands):
+if not has_patch:
     hook_list.append(patch_hook)
-    changed = True
-
-if not any('discord-session-greeting.sh' in c for c in existing_commands):
+if not has_greeting:
     hook_list.append(greeting_hook)
-    changed = True
 
-if changed:
-    print(json.dumps(settings, indent=2))
-else:
-    sys.exit(1)
+print(json.dumps(settings, indent=2))
 PYEOF
-) || true
+) && python_exit=0 || python_exit=$?
 
-if [[ -n "$updated" ]]; then
+if [[ $python_exit -eq 2 ]]; then
+  echo "claude-code-channels: ERROR — failed to parse $SETTINGS" >&2
+  exit 1
+elif [[ -n "$updated" ]]; then
   echo "$updated" > "$SETTINGS"
   echo "claude-code-channels: added SessionStart hooks to settings.json" >&2
 else
