@@ -1,143 +1,209 @@
-# Feature Research
+# Feature Landscape
 
-**Domain:** Project-scoped configuration for CLI tool plugins (MCP server upgrade)
-**Researched:** 2026-03-23
-**Confidence:** HIGH (well-established ecosystem patterns; cross-referenced git, npm, ESLint, direnv)
+**Domain:** Patch-based Discord plugin extension for Claude Code (Milestone 2)
+**Researched:** 2026-03-25
+**Confidence:** HIGH (all 5 features are well-scoped; codebase inspected directly)
 
-## Feature Landscape
+## Table Stakes
 
-### Table Stakes (Users Expect These)
-
-Features users assume exist based on every other CLI tool with local config. Missing these = the feature feels broken or half-baked.
+Features the extension must have or it does not function as advertised.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Local config file at a predictable path | git uses `.git/config`, npm uses `.npmrc`, ESLint uses `.eslintrc` — users expect a dotfile in the project root or a `.claude/` subdirectory | LOW | PROJECT.md already decided: `./.claude/channels/discord/access.json` |
-| Local config completely replaces global (no silent merge) | Isolation is the whole point — cross-project bleed is the bug being fixed. git's local config *overrides* global values per-key. The PROJECT.md decision of "full replacement" matches this mental model | LOW | Already decided. Merge would require per-key precedence rules that add complexity with no clear user benefit for this use case |
-| Explicit scope prompt at config write time | When running `group add`, the user must choose local vs global. No silent defaulting — git requires you to pass `--global` explicitly, local is the default. Users expect to be asked | LOW | The UX moment where scope is set. A bad default here causes hard-to-debug cross-project leakage |
-| Status command shows which config is active | `git config --list --show-origin` shows where each value comes from. Users running multiple sessions need to know at a glance whether the current session is local or global | LOW | `/discord:access` (no args) must show "using local: ./.claude/channels/discord/access.json" or "using global: ~/.claude/channels/discord/access.json" |
-| Fallback to global when no local config exists | npm falls back up the directory tree; git falls back to `~/.gitconfig`. Sessions without a local config must work exactly as before — zero regression | LOW | Already in requirements. Critical for backward compatibility |
-| `group rm` operates on the correct file | When you remove a channel group, it must edit whichever file the group lives in. Editing the wrong file leaves ghost entries or silently fails | MEDIUM | Requires knowing at `rm` time whether the active config is local or global — same logic as server startup |
+| Install/uninstall scripts | Without automated install, users must manually patch plugin files after every plugin update. This is the delivery mechanism for everything else. | MEDIUM | Currently `apply-discord-patch.sh` exists but is apply-only (no uninstall). Must become modular to support growing feature set. |
+| Fix DISCORD_PROJECT_DIR propagation | The entire project-local scoping feature is broken without this. Sessions silently fall back to global config, defeating the core value proposition. | LOW-MEDIUM | The `sh -c` wrapper in .mcp.json exists but $PWD may not resolve to the project directory at MCP server spawn time. Need to verify the actual value reaching the process. |
 
-### Differentiators (Competitive Advantage)
+## Differentiators
 
-Features that improve the experience beyond basic correctness. Not required for the feature to work, but meaningfully reduce friction.
+Features that add real value but are not strictly required for basic functionality.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| `--local` / `--global` flags on `group add` | Avoids the interactive prompt for scripting and power users. git supports both `--local` and `--global` flags. Lets users wire up a project in one command without answering prompts | LOW | Optional enhancement to the scope prompt. Does not replace the prompt — just allows bypass. Useful for project dotfile setup scripts |
-| Show config file path in status output | Helps users who clone a repo, find an existing local config, and need to know where it came from. Not just "local" but the full resolved path | LOW | Costs one line of output. Reduces "wait, which file am I editing?" confusion |
-| `group add` with `--local` as default for new sessions | When running inside a project directory (env var passed), default scope for `group add` should be local, not global. Matches git's "local is default when in a repo" behavior | LOW | Only relevant once project-dir discovery is solved. Can be deferred if the prompt already makes scope explicit |
-| Warn when a global channel group is also in local config | Duplicate group entries across local and global could confuse users auditing their config. A warning at status-check time ("channel X also appears in global config, but local config takes precedence") prevents silent confusion | LOW | Low-cost safety net. Purely informational — no action required |
+| Session greeting to Discord | Confirms to the human on Discord that a Claude Code session is alive and listening. Without this, you send a message and wonder if anyone is home. Reduces "is this thing on?" friction. | LOW | Send a message to configured channel(s) when the MCP server starts and confirms channel access. |
+| Channel ID display in session | The user in the CLI needs to know which Discord channel they are connected to. Currently you configure it and hope. Display removes guesswork. | LOW | Print channel ID (and optionally channel name) to stderr or as a tool response during session startup. |
+| Strip rich media support | The existing attachment/image handling in the plugin is generic and untested for this extension's use case. Stripping it creates a clean baseline for controlled re-implementation later. | MEDIUM | Must identify all attachment-related code paths (download_attachment tool, file upload in reply, attachment metadata in notifications) and either remove or neutralize them. |
 
-### Anti-Features (Commonly Requested, Often Problematic)
+## Anti-Features
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| Merge local + global access.json | Seems more flexible — why not use global groups AND local ones? | Unpredictable precedence at runtime. If the same channel ID appears in both, which wins? Per-key merge requires a full precedence model, documentation, and user mental overhead. The isolation guarantee is lost | Full replacement (already decided in PROJECT.md). If you need global groups in a project, copy them to the local file. Explicit is better than implicit |
-| Auto-detect project dir from cwd of the skill process | "Just use cwd" feels simpler than passing an env var | The skill runs inside Claude Code, which may have a different cwd than the project root. The MCP server's cwd is `CLAUDE_PLUGIN_ROOT`, not the project. Silent wrong-dir detection causes config to be written to the wrong place with no error | Pass project dir via env var explicitly (already identified as the correct approach in PROJECT.md) |
-| Per-channel-group scope (some groups local, some global) | Fine-grained control | Requires tracking which file each group came from at runtime, merging at read time, and knowing where to write at edit time. Breaks the simple "one file wins" mental model | Project isolation is binary: either the whole session is project-scoped or it isn't. Keep the model simple |
-| Config inheritance / directory tree walk (npm-style) | npm walks up to find `.npmrc`. Seems convenient for monorepos | For Discord channel routing, "close enough" project detection is dangerous — a workspace root config leaking into a sub-package session is the bug we're fixing. Deterministic > convenient here | Explicit env var. The session's project dir is known at startup; don't walk |
-| GUI or web interface for managing local config | Lower barrier for non-technical users | Scope creep. The plugin is a developer tool used via terminal. A GUI adds infrastructure, auth, and maintenance cost with no clear payoff for this audience | Keep the skill-based CLI approach; improve `--flags` for scripting |
+Things to deliberately NOT build in this milestone.
+
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| Re-implement rich media after stripping | Scope creep. The strip is to establish a clean baseline. Re-adding media support requires proper testing, file size handling, and content-type validation. | Strip now, re-implement in a future milestone with dedicated testing. |
+| Merge local + global access.json | Creates ambiguous precedence. Key decision from v1.0 was full replacement. | Keep full replacement -- local file completely overrides global. |
+| GUI for channel management | The `/discord:access` skill handles all config. A GUI adds a second source of truth. | Stick with CLI skill-based management. |
+| Auto-detection of project directory changes | Hot-reloading config when the user creates/removes local access.json mid-session. | Decide scope at boot. Restart required for config file changes. |
+| Multi-bot support | All sessions share one bot. Routing is per-session via config, not per-bot. | Keep single bot architecture. |
+| Greeting customization (templates, rich embeds) | Over-engineering. A plain text message ("Claude Code session started for project X") is sufficient. | Simple hardcoded message format. Allow disable via config if needed. |
+| Uninstall that removes project-local config files | The uninstall script should only undo plugin cache patches, not touch user's project config (.claude/channels/discord/access.json). | Uninstall reverses plugin patches only. User config is theirs to manage. |
+
+---
+
+## Detailed Feature Specifications
+
+### Feature 1: Install/Uninstall Scripts
+
+**Priority:** Table stakes -- this is the delivery framework for all other features.
+
+**Expected behavior:**
+- `install.sh`: Applies all patches to the latest Discord plugin version in `~/.claude/plugins/cache/claude-plugins-official/discord/<version>/`. Idempotent -- safe to run repeatedly. Should be callable from a SessionStart hook.
+- `uninstall.sh`: Reverses all patches, restoring the plugin to its original state. Also idempotent.
+- Modular structure: Each feature's patch logic should be a discrete section/function so new features can be added without restructuring the script.
+- Per-component status reporting: Print which components were patched/skipped/already-applied so the user knows what happened.
+
+**Edge cases:**
+- Plugin not installed (no `~/.claude/plugins/cache/claude-plugins-official/discord/` directory) -- exit gracefully with informational message.
+- Plugin updated to a new version mid-session -- patches are against the latest version directory. The script must find the correct version. Consider: version sort (`sort -V`) to pick latest.
+- Anchor strings not found in new plugin version -- the `bun -e` inline scripts use string matching (e.g., `const ENV_FILE = join(STATE_DIR, '.env')`). If the upstream plugin changes these lines, the patch silently fails. Must detect and report this.
+- Uninstall when patches were never applied -- should succeed silently (idempotent).
+- Partial patch state (some components patched, others not) -- both install and uninstall must handle this gracefully.
+
+**Complexity:** MEDIUM. The current `apply-discord-patch.sh` is a reasonable starting point but needs: (1) uninstall counterpart, (2) modular structure for new features, (3) better error reporting when anchors are missing.
+
+---
+
+### Feature 2: Fix DISCORD_PROJECT_DIR Propagation
+
+**Priority:** Table stakes -- without this, local scoping is non-functional.
+
+**Expected behavior:**
+- When Claude Code starts a session in `/path/to/project`, the MCP server for Discord receives `DISCORD_PROJECT_DIR=/path/to/project` as an environment variable.
+- The server uses this to check for `<project>/.claude/channels/discord/access.json` and, if present, uses it instead of the global config.
+
+**Current state (broken):**
+- The `.mcp.json` uses `sh -c "DISCORD_PROJECT_DIR=$PWD exec bun run --cwd '${CLAUDE_PLUGIN_ROOT}' ..."`.
+- The problem: `$PWD` is a shell variable that expands at `sh -c` execution time. But Claude Code may set the working directory to the plugin root (via `--cwd`) BEFORE the `sh` subprocess inherits its `$PWD`. OR Claude Code might spawn the MCP server from a different directory than the project root.
+- Alternative approach from the patch file: `.mcp.json` `env` block with `"DISCORD_PROJECT_DIR": "${PWD}"` -- but `${PWD}` substitution in the env block depends on Claude Code performing env var expansion, which may not happen for `PWD` (only `CLAUDE_*` vars may be expanded).
+
+**Edge cases:**
+- Project directory with spaces in the path -- must be properly quoted in the `sh -c` command.
+- `$PWD` not set or set to unexpected value -- fallback to global config (existing behavior, but should log a warning).
+- Symlinked project directories -- `$PWD` might not match the canonical path. The `resolveAccessFile()` function currently does a simple `join()` without resolving symlinks.
+- Claude Code launched from a subdirectory of the project -- `$PWD` would be the subdirectory, not the project root. The local access.json is at the project root's `.claude/` directory.
+
+**Investigation needed:** The actual mechanism by which Claude Code spawns MCP servers. Does it set CWD to the project directory before exec? Does it expand `${CLAUDE_PROJECT_DIR}` in the env block? The `sh -c` wrapper captures `$PWD` but if Claude Code doesn't chdir to the project before spawning, this captures the wrong directory.
+
+**Complexity:** LOW-MEDIUM. The fix is likely small (possibly just using `${CLAUDE_PROJECT_DIR}` in the env block instead of relying on `$PWD`), but diagnosing the exact failure mode requires runtime testing.
+
+---
+
+### Feature 3: Session Greeting to Discord
+
+**Priority:** Differentiator -- nice to have, reduces "is this thing on?" friction.
+
+**Expected behavior:**
+- When the MCP server starts and successfully connects to Discord (bot is online), send a message to each configured channel announcing the session.
+- Message content: Simple text like "Claude Code session connected (project: my-project-name)" or similar. Include the project name (derived from the project directory basename) if `DISCORD_PROJECT_DIR` is set.
+- Only send greeting to channels the session is authorized to use (from the active access.json's `groups`).
+- If no channels are configured, skip the greeting (don't crash, don't warn excessively).
+
+**Edge cases:**
+- Bot not yet connected when greeting fires -- must wait for Discord.js `ready` event before sending.
+- Channel ID in config but bot doesn't have access to that channel -- catch the send error, log to stderr, continue. Do not crash the entire server.
+- Multiple channels configured -- send greeting to all of them.
+- Session restarts rapidly (e.g., during development) -- rapid greetings could be annoying. Consider: no rate limiting in v1, but design the message to be unobtrusive.
+- Greeting should only fire once at startup, not on reconnections (Discord.js can reconnect the WebSocket without restarting the process).
+- DISCORD_PROJECT_DIR not set -- greeting should still work, just without project name. "Claude Code session connected" is fine.
+
+**Complexity:** LOW. The Discord.js client is already initialized; sending a message to a channel by ID is a single API call. The only subtlety is timing (wait for `ready` event) and error handling.
+
+---
+
+### Feature 4: Channel ID Display in Session
+
+**Priority:** Differentiator -- removes guesswork about which channel the session is connected to.
+
+**Expected behavior:**
+- After the MCP server starts and resolves which access.json to use, display the connected channel ID(s) to the Claude Code session.
+- This could be: (a) stderr output visible in Claude Code's MCP server logs, or (b) a notification-style message surfaced through the MCP protocol, or (c) part of the greeting message logic.
+- Show: channel ID, and if possible, the channel name (requires a Discord API call to resolve).
+
+**Edge cases:**
+- No channels configured (empty `groups` object) -- display "No channels configured. Use /discord:access group add <channelId> to add one."
+- Channel ID exists in config but bot can't access the channel -- display the ID but note it may be inaccessible.
+- Multiple channels -- list all of them.
+- The display mechanism matters: stderr is only visible if the user checks MCP server logs. A tool response or notification is more visible but requires the right MCP lifecycle hook.
+
+**Implementation options:**
+1. **Stderr at startup** -- simplest, but least visible to the user. Already used for "using local/global config" messages.
+2. **Part of the greeting feature** -- the greeting already announces to Discord; this announces to the CLI. Natural pairing.
+3. **MCP server info/status tool** -- a `discord_status` tool the user can call to see connection state. More discoverable but requires adding a new tool to the MCP server.
+
+**Recommendation:** Option 1 (stderr) as the baseline, since it requires zero protocol changes. Option 3 as a stretch goal if the install script framework makes adding new tools easy.
+
+**Complexity:** LOW. Reading channel IDs from the parsed access.json and printing to stderr is trivial. Resolving channel names via Discord API adds a small amount of async complexity.
+
+---
+
+### Feature 5: Strip Rich Media Support
+
+**Priority:** Differentiator -- creates a clean baseline for future re-implementation.
+
+**Expected behavior:**
+- Remove or disable the `download_attachment` tool from the MCP server.
+- Remove file attachment support from the `reply` tool (the `files` parameter).
+- Remove attachment metadata from incoming message notifications (the `attachment_count` and `attachments` attributes on the channel XML tag).
+- The plugin should still handle messages that contain attachments -- it just ignores them. No crashes on messages with images/files.
+
+**Current attachment code in server.ts (v0.0.4):**
+- `MAX_ATTACHMENT_BYTES` constant (line 160)
+- `downloadAttachment()` function (line 443-459) -- downloads an attachment to local inbox
+- `safeAttName()` function (line 461) -- generates safe filenames for attachments
+- `download_attachment` tool definition (line 596) and handler (line 717-730)
+- `reply` tool's `files` parameter (line 563) and file upload logic (line 640-646)
+- Attachment listing in message notifications (lines 883-906)
+- Server instructions mentioning attachments (line 483, 485)
+
+**Edge cases:**
+- Messages with only attachments and no text content -- currently rendered as `(attachment)`. After stripping, these should either be silently dropped or rendered as "(message contained attachments only -- media not supported)".
+- The `download_attachment` tool must be completely removed from the tool list, not just made non-functional. Leaving a broken tool confuses the LLM.
+- Server instructions (the MCP server description) reference attachments -- these strings must be updated to not mention attachment capabilities.
+- File upload in `reply` -- if the `files` parameter is removed, ensure the LLM doesn't try to use it (update the tool description).
+
+**Complexity:** MEDIUM. There are 6+ code locations to modify. The patch must be thorough -- leaving a partial attachment code path creates confusing errors. The install script needs a dedicated section for this feature.
+
+---
 
 ## Feature Dependencies
 
 ```
-[Scope prompt in group add]
-    └──requires──> [Project dir env var discovery]
-                       └──required before──> [Server reads local config at startup]
-
-[group rm on correct file]
-    └──requires──> [Server/skill knows which file is active]
-                       └──same mechanism as──> [Server reads local config at startup]
-
-[Status shows active config]
-    └──requires──> [Server/skill knows which file is active]
-
-[--local/--global flags]
-    └──enhances──> [Scope prompt in group add]
-    └──requires──> [Project dir env var discovery]
-
-[Warn on duplicate groups]
-    └──requires──> [Status shows active config]
-    └──enhances──> [Status shows active config]
+install.sh (Feature 1)
+  |
+  +-- All other features depend on install.sh as the delivery mechanism
+  |
+  +-- Fix DISCORD_PROJECT_DIR (Feature 2) -- must be applied first
+  |     |
+  |     +-- Session greeting (Feature 3) -- uses PROJECT_DIR for project name
+  |     |
+  |     +-- Channel ID display (Feature 4) -- uses active config (local vs global)
+  |
+  +-- Strip rich media (Feature 5) -- independent of scoping, depends only on install.sh
 ```
 
-### Dependency Notes
+**Critical path:** Feature 1 (install) -> Feature 2 (env var fix) -> Features 3+4 (greeting + display). Feature 5 is parallel to 2-4.
 
-- **Project dir env var discovery blocks everything:** All scoping features depend on the server/skill knowing the project directory at startup. This is the foundational problem to solve first — the server's cwd is `CLAUDE_PLUGIN_ROOT`, not the project. Nothing else works correctly without this.
-- **Status command is a forcing function:** Implementing "show which file is active" forces you to correctly implement the local-vs-global resolution logic. Build status first — it validates the core mechanism before you build `group add` scope prompting on top of it.
-- **`group rm` scope awareness depends on the same mechanism as startup:** The server must resolve local-vs-global at boot; the skill must use the same resolution at edit time. These should share logic, not be implemented twice.
-- **`--local/--global` flags enhance but don't replace the prompt:** The flags are a power-user shortcut. The interactive prompt remains the primary UX for users who don't know which scope they want.
+## MVP Recommendation
 
-## MVP Definition
+**Must ship (table stakes):**
+1. Install/uninstall scripts (Feature 1) -- everything else needs this
+2. Fix DISCORD_PROJECT_DIR (Feature 2) -- the core value prop is broken without it
 
-### Launch With (v1)
+**Should ship (high-value differentiators):**
+3. Session greeting (Feature 3) -- low complexity, high user-facing impact
+4. Channel ID display (Feature 4) -- low complexity, complements greeting
 
-Minimum viable — what's needed for project-local scoping to work correctly.
+**Can ship independently:**
+5. Strip rich media (Feature 5) -- useful cleanup but not blocking other features
 
-- [ ] Project dir passed via env var to server and skill — foundation for all other scoping
-- [ ] Server reads local access.json at startup if it exists, else falls back to global — core routing behavior
-- [ ] `group add` prompts for local vs global scope — the UX moment where isolation is set up
-- [ ] Status command (`/discord:access` no args) shows which file is active and its path — required for debugging and confidence
-- [ ] `group rm` operates on the correct file — correctness requirement; editing the wrong file is silent data corruption
-
-### Add After Validation (v1.x)
-
-Add once the core local/global split is working and in use.
-
-- [ ] `--local` / `--global` flags on `group add` — triggered when users start scripting project setup in dotfiles
-- [ ] Warning when a channel group appears in both local and global config — triggered by user confusion reports
-- [ ] Show full resolved path in status output (already low effort, could fold into v1)
-
-### Future Consideration (v2+)
-
-Defer until there's evidence of need.
-
-- [ ] Default scope inferred from whether a local config already exists — adds magic, prefer explicit until patterns emerge
-- [ ] `config init` command to scaffold a local access.json — useful if project dotfile workflows become common
-
-## Feature Prioritization Matrix
-
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Project dir via env var | HIGH | LOW | P1 |
-| Server reads local config, falls back to global | HIGH | LOW | P1 |
-| `group add` scope prompt (local vs global) | HIGH | LOW | P1 |
-| Status shows active file | HIGH | LOW | P1 |
-| `group rm` on correct file | HIGH | MEDIUM | P1 |
-| `--local` / `--global` flags | MEDIUM | LOW | P2 |
-| Show full path in status | MEDIUM | LOW | P2 |
-| Warn on duplicate groups | LOW | LOW | P3 |
-
-**Priority key:**
-- P1: Must have for launch — feature is non-functional or unsafe without it
-- P2: Should have — polish and power-user ergonomics
-- P3: Nice to have — informational improvement
-
-## Competitor Feature Analysis
-
-Drawn from established CLI tools with local/global config split.
-
-| Feature | git config | npm .npmrc | ESLint | Our Approach |
-|---------|------------|------------|--------|--------------|
-| Local config location | `.git/config` (auto-detected from repo root) | `.npmrc` in cwd, walks up to home | `.eslintrc` in project root | `.claude/channels/discord/access.json` in project root — explicit, not auto-walked |
-| Global config location | `~/.gitconfig` | `~/.npmrc` | `~/.eslintrc` (deprecated) | `~/.claude/channels/discord/access.json` |
-| Resolution strategy | Local overrides global per-key | Local overrides global per-key | Nearest config wins, can extend parent | Local replaces global entirely — simpler, full isolation |
-| Explicit scope flag | `--local` / `--global` / `--system` | `--location` | N/A (file-based) | `--local` / `--global` on `group add` (v1.x) |
-| Status / introspection | `git config --list --show-origin` | `npm config list` | N/A | `/discord:access` shows active file + contents |
-| Config bootstrapping | Auto-created on `git init` | Created by `npm init` | User creates file | Created by skill when user chooses "local" scope |
-
-**Key divergence from ecosystem norms:** git and npm merge local + global (local wins on conflicts). We use full replacement. This is intentional — for message routing, partial isolation is worse than no isolation. A channel that routes to the wrong session is harder to debug than a missing channel group.
+**Recommended phase ordering:**
+- Phase 1: Install/uninstall framework + DISCORD_PROJECT_DIR fix (table stakes)
+- Phase 2: Session greeting + channel ID display (natural pairing, both low complexity)
+- Phase 3: Strip rich media (isolated, medium complexity)
 
 ## Sources
 
-- git config documentation: `git config --help` (local/global/system hierarchy) — HIGH confidence, well-known behavior
-- npm .npmrc resolution: npm docs on config files — HIGH confidence, well-known behavior
-- ESLint configuration cascade: eslint.org/docs — MEDIUM confidence (ESLint v9 changed flat config; hierarchy behavior is from v8 docs)
-- PROJECT.md decisions (local-replaces-global, env var for project dir) — HIGH confidence, authoritative for this project
-- server.ts implementation: `DISCORD_STATE_DIR` env var pattern already present — HIGH confidence, read from source
-
----
-*Feature research for: project-scoped configuration — Claude Code Discord channel plugin*
-*Researched: 2026-03-23*
+- Direct inspection of `~/.claude/plugins/cache/claude-plugins-official/discord/0.0.4/server.ts` (921 lines)
+- Direct inspection of `~/.claude/plugins/cache/claude-plugins-official/discord/0.0.4/.mcp.json`
+- Direct inspection of `scripts/apply-discord-patch.sh` (current install script)
+- Direct inspection of `patches/SKILL.md` (patched access skill)
+- `.planning/PROJECT.md` (requirements, constraints, key decisions)

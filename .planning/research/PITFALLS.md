@@ -1,232 +1,334 @@
-# Pitfalls Research
+# Domain Pitfalls
 
-**Domain:** MCP server plugin — project-local config scoping (Discord access control)
-**Researched:** 2026-03-23
-**Confidence:** HIGH — based on direct code inspection of server.ts and SKILL.md
+**Domain:** MCP server plugin patching -- project-local config scoping (Discord)
+**Researched:** 2026-03-25
+**Confidence:** HIGH -- based on direct inspection of broken patch, official MCP docs, and plugin-dev skill examples
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Project Directory Discovery — The Server Has the Wrong cwd
+### Pitfall 1: `$PWD` in `sh -c` Wrapper Does Not Capture the Project Directory
 
 **What goes wrong:**
-The MCP server is launched with `--cwd ${CLAUDE_PLUGIN_ROOT}`, so `process.cwd()` is the plugin cache directory, not the user's project directory. Any code that tries to locate `.claude/channels/discord/access.json` relative to cwd will resolve to the plugin root, not the project.
+The v1.1 patch replaced the original `.mcp.json` command with an `sh -c` wrapper:
+```json
+"command": "sh",
+"args": ["-c", "DISCORD_PROJECT_DIR=$PWD exec bun run --cwd '${CLAUDE_PLUGIN_ROOT}' --shell=bun --silent start"]
+```
+The intent: `sh` inherits the project directory as its cwd, so `$PWD` captures it before `--cwd` changes it for the bun process. The reality: **Claude Code does not necessarily spawn MCP server processes with the project directory as cwd.** The cwd of the spawned process is controlled by Claude Code's process manager, not by the user's terminal. If Claude Code sets cwd to the plugin root (or any other directory) before invoking the command, `$PWD` resolves to that directory, not the project.
 
 **Why it happens:**
-Developers assume the server runs from where the user is working. The plugin launch mechanism doesn't forward the project cwd — it only exposes `CLAUDE_PLUGIN_ROOT` as the server's working directory.
+Confusion between two variable expansion mechanisms:
+1. **Claude Code template expansion** -- `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, and user env vars like `${MY_API_KEY}` are expanded by Claude Code's own substitution engine *before* spawning the process. These use `${...}` syntax in `.mcp.json` fields.
+2. **Shell expansion** -- `$PWD` is expanded by `sh` at runtime, using whatever working directory the process was spawned with.
 
-**How to avoid:**
-Pass the project directory explicitly via a dedicated environment variable (e.g., `CLAUDE_PROJECT_DIR`) set by Claude Code's plugin launch config. Do not infer project dir from `process.cwd()`, `__dirname`, import.meta.url, or argv. Document the env var contract clearly so the launch config change is not missed.
+The official stdio-server.json example passes `${CLAUDE_PROJECT_DIR}` in `args` -- this is Claude Code template expansion, not shell expansion. It works because Claude Code knows the project directory and substitutes it at config parse time.
+
+**Evidence:**
+- The official example (`plugins/plugin-dev/skills/mcp-integration/examples/stdio-server.json`) uses `"${CLAUDE_PROJECT_DIR}"` in args -- never `$PWD`.
+- The MCP integration SKILL.md documents "environment variable substitution" as a feature of `.mcp.json` config parsing, listing `${CLAUDE_PLUGIN_ROOT}` and user env vars.
+- The original reference patch (`patches/discord-local-scoping.patch`) used the `env` block approach: `"DISCORD_PROJECT_DIR": "${PWD}"` -- this relies on Claude Code expanding `${PWD}` from the user's environment, which may or may not work depending on whether Claude Code's substitution engine looks up arbitrary env vars or only its own magic vars.
+- The `sh -c` wrapper was introduced in `apply-discord-patch.sh` as an alternative to the `env` block approach, but both approaches have the same underlying uncertainty about what `PWD` resolves to.
+
+**Prevention:**
+Use `${CLAUDE_PROJECT_DIR}` (Claude Code's own magic variable) in the `.mcp.json` `env` block instead of `$PWD`:
+```json
+{
+  "mcpServers": {
+    "discord": {
+      "command": "bun",
+      "args": ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "--shell=bun", "--silent", "start"],
+      "env": {
+        "DISCORD_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}
+```
+This uses Claude Code's template expansion (proven to work in the official example) and keeps the original command structure (no `sh -c` wrapper).
 
 **Warning signs:**
-- Local access.json never loads even after creating `.claude/channels/discord/access.json` in the project
-- `process.cwd()` logged at boot shows a path under `~/.claude/plugins/cache/`
-- Fallback to global access.json even when local file exists
+- `DISCORD_PROJECT_DIR` is empty or contains the plugin cache path at server boot
+- Server always reports "using global config" even when local access.json exists
+- The `sh -c` wrapper introduces a layer of indirection that makes debugging harder (which shell? which env?)
 
-**Phase to address:**
-Phase 1 (project dir discovery mechanism) — this is a foundational blocker; nothing else works without it.
+**Detection test:** Add `process.stderr.write('DISCORD_PROJECT_DIR=' + process.env.DISCORD_PROJECT_DIR)` at boot and verify it shows the actual project path, not the plugin root or empty string.
+
+**Phase to address:** Phase 1 -- this is THE root cause of the v1.1 failure.
 
 ---
 
-### Pitfall 2: Plugin Cache Overwrites Erase server.ts Changes
+### Pitfall 2: Plugin Cache Version Drift Breaks Hardcoded Paths and Regex Anchors
 
 **What goes wrong:**
-`~/.claude/plugins/cache/claude-plugins-official/discord/0.0.1/server.ts` is inside the plugin cache. Any upstream plugin update will overwrite the file, silently losing local-scoping logic. This is the most likely cause of a silent regression weeks after shipping.
+The apply script discovers the latest version via `ls | sort -V | tail -1`. Between v1.0 (version `0.0.1`) and now (version `0.0.4`), the plugin version changed. Every regex anchor in the bun -e patching script (e.g., `const ENV_FILE = join(STATE_DIR, '.env')`, `import { join, sep } from 'path'`) depends on the exact source text of the upstream plugin. If the upstream plugin changes even whitespace, the regex fails silently (the anchor check prints a warning to stderr but continues), and partial patches get applied.
 
 **Why it happens:**
-Developers edit the cached file directly because it's the fastest path to get things working. The update mechanism doesn't merge — it replaces the entire versioned directory.
+The patching strategy uses string matching against the upstream source. Any upstream change -- new imports, reformatted constants, added lines between anchors -- breaks the match. The script correctly checks for an anchor before inserting, but:
+- If the anchor is missing, the server.ts patch is skipped silently (just a stderr message)
+- The `.mcp.json` patch may still apply, creating a mismatch: the env var is injected but the server code that reads it is absent
 
-**How to avoid:**
-The project-local scoping logic must live in a file outside the plugin cache (e.g., `~/.claude/channels/discord/local-scope.js` as an optional sidecar), OR the changes must be upstreamed to the plugin source and released as a new version. A mid-path is to have server.ts `require`/import from a well-known external path so the cache file stays thin and the logic lives in the user's config directory.
+**Prevention:**
+1. **Check patch coherence:** After all patches are applied, verify that BOTH the server.ts marker AND the `.mcp.json` marker exist. If only one was applied, error out and tell the user.
+2. **Pin expected version:** Store the expected plugin version in the script. If the discovered version differs from expected, warn loudly and require explicit `--force` to proceed.
+3. **Test anchors before patching:** Before running the bun -e script, grep for all required anchors. If any are missing, fail early with a clear message about which anchor is gone.
 
 **Warning signs:**
-- After running `claude` with a fresh plugin fetch, local scope stops working
-- File modification timestamp on `server.ts` resets to the original release date
-- Behavior reverts to global-only access.json silently
+- Patch reports "server.ts patched" but the key functions are missing from the file
+- `.mcp.json` is patched (has `DISCORD_PROJECT_DIR`) but `server.ts` has no `resolveAccessFile`
+- New plugin version appears in cache but install script still reports "already applied" because it only checks one marker
 
-**Phase to address:**
-Phase 1 — decide the code residency strategy before writing any logic into server.ts.
+**Detection test:** After patching, grep the patched `server.ts` for `resolveAccessFile` AND `ACTIVE_ACCESS_FILE` -- both must be present if the marker is present.
+
+**Phase to address:** Phase 1 (install script hardening).
 
 ---
 
-### Pitfall 3: Skill-vs-Server Config File Desync
+### Pitfall 3: `sh -c` Wrapper Breaks Plugin's Own Shell Assumptions
 
 **What goes wrong:**
-The `/discord:access` skill edits `~/.claude/channels/discord/access.json` unconditionally (hardcoded path in SKILL.md). If the server is reading a local access.json at `.claude/channels/discord/access.json` but the skill writes to the global path, the skill and server are operating on different files. Users will run `group add` or `pair`, see success, but the server ignores the change.
+The original `.mcp.json` uses `"command": "bun"` with direct args. Changing this to `"command": "sh"` with an `-c` wrapper alters the process tree: `sh` becomes the parent, `bun` is exec'd. This can break:
+- Signal handling (SIGTERM goes to sh, not bun, unless `exec` is used -- the current script does use `exec`, but if someone removes it, bun becomes a child and signals break)
+- Environment inheritance (sh may not pass through all env vars that Claude Code sets on the process)
+- The `env` block in `.mcp.json` is applied to the command process -- with `sh` as the command, env vars are set on `sh`, which `exec bun` inherits. But if Claude Code applies env vars *and* substitutes `${...}` patterns in args before spawning, the `$PWD` in the args string will be treated as a literal `$PWD` (not expanded) if Claude Code's substitution engine doesn't recognize it.
 
 **Why it happens:**
-The skill and server are decoupled — the skill is a prompt-driven Claude tool that edits JSON; the server is a running process. They share state only via the filesystem. When scoping is added, the server's "active file" path becomes dynamic, but the skill still hardcodes the old path.
+The `sh -c` wrapper was a creative workaround to capture `$PWD` at runtime. But it introduces a layer of shell indirection that interacts unpredictably with Claude Code's process management.
 
-**How to avoid:**
-The skill must be taught the same discovery logic as the server — either by reading a sidecar file that identifies the active scope, or by accepting a `--scope local|global` flag. The simpler approach: when the server starts in local mode, write a sentinel file (e.g., `.claude/channels/discord/.active-scope`) that the skill reads to know which file to edit.
+**Prevention:**
+Don't use `sh -c` wrappers. Use the `.mcp.json` `env` block with Claude Code's own template variables:
+```json
+"env": { "DISCORD_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}" }
+```
+Keep `"command": "bun"` and `"args"` as the upstream defines them. The only change to `.mcp.json` should be adding the `env` block.
 
 **Warning signs:**
-- `/discord:access group add` reports success but Discord messages from that channel are still dropped
-- Status output from `/discord:access` shows channels that the server is not actually routing
-- `pair` command succeeds (writes approved/ dir) but pairing confirmation never fires because server is watching a different STATE_DIR
+- MCP server process doesn't respond to `/mcp` status checks
+- Server takes longer to start (extra process spawn)
+- Debug logs show `sh` as the process name instead of `bun`
 
-**Phase to address:**
-Phase 2 (skill update) — after server-side scoping is working, the skill update is required before the feature is usable end-to-end.
+**Phase to address:** Phase 1 -- simplify the `.mcp.json` patch.
 
 ---
 
-### Pitfall 4: Shared Bot + Per-Session Filtering — Race on saveAccess
+### Pitfall 4: Patch Script Idempotency Fails When Partially Applied
 
 **What goes wrong:**
-All Claude Code sessions share one Discord bot and one gateway connection. But each session has its own MCP server process with its own in-memory state. If two sessions both call `saveAccess()` on the same global access.json concurrently (e.g., two pending pairings approved at the same time), the tmp-rename pattern in the current code is atomic per-write but not transactional — one session's write can clobber the other's in-flight changes if both read before either writes.
-
-The server uses `readAccessFile()` fresh on every `gate()` call (not a cached copy), which means this is actually a low-frequency window, but it exists during the pairing flow where `saveAccess` is called twice in sequence.
+The current script checks three independent markers (`MARKER` for server.ts, `MCP_MARKER` for .mcp.json, `SKILL_MARKER` for SKILL.md) and short-circuits if ALL THREE are present. But if only one or two are present (partial application from a previous failed run or version change), the script tries to apply only the missing patches. This can create inconsistent states:
+- `.mcp.json` patched (env var injection) but `server.ts` not patched (no code to read it) -- env var is set but ignored
+- `server.ts` patched but `.mcp.json` not patched -- code expects env var that's never set
+- SKILL.md patched but nothing else -- user sees scope resolution instructions but the mechanism doesn't work
 
 **Why it happens:**
-The current code was designed for a single-session use case. The tmp-rename pattern (`writeFileSync(tmp); renameSync(tmp, ACCESS_FILE)`) is safe against crashes but not against concurrent writers. When local scoping is added, two sessions with the same global access.json will be concurrent writers.
+Each patch is checked and applied independently. The "all or nothing" check only gates the fast-path skip. There's no validation that the resulting state is coherent after partial application.
 
-**How to avoid:**
-For the global file: accept the existing race as acceptable — the window is small and the worst case is a pairing code getting lost (user retries). For local access.json: this is a single-session file by design, so there is no concurrency concern. Document this clearly — local files are single-writer by construction.
+**Prevention:**
+1. Add a post-patch coherence check: after all three patch blocks run, verify that all three markers are present. If not, error with a clear message.
+2. Consider a "force re-apply" mode that strips existing patches first (remove markers and injected code) then re-applies from scratch.
+3. Track patch version: instead of just a boolean marker, use a versioned marker (e.g., `// discord-local-scoping patch v2`) so the script knows when to re-apply after changes.
 
 **Warning signs:**
-- Pairing codes disappear from `pending` without being approved
-- `access.json` gets corrupted (triggers the `.corrupt-${Date.now()}` rename)
-- Groups added in one session disappear after another session approves a pairing
+- Script reports "patch already applied" but features don't work
+- One component (e.g., server.ts) has the marker but the code around it is from a different version
+- Running the script multiple times produces different results
 
-**Phase to address:**
-Phase 1 — document the concurrency model so the implementation doesn't accidentally introduce new shared-file writes from local-scoped sessions.
+**Phase to address:** Phase 1 (install script robustness).
 
 ---
 
-### Pitfall 5: Backward Compatibility Break for Projects Without Local Config
+### Pitfall 5: `bun -e` Patching Script Has Fragile Quoting and Escaping
 
 **What goes wrong:**
-If the env var (`CLAUDE_PROJECT_DIR`) is not passed by Claude Code's plugin launch config, the server crashes or silently falls back incorrectly. Existing projects that work fine with global access.json break because the new code path introduces an uncaught exception when the env var is absent.
+The apply script embeds a multi-line JavaScript string inside a bash heredoc-like construct (`bun -e "..."`). The JavaScript itself contains template literals, regex patterns, and escaped characters. This creates multiple layers of escaping:
+1. Bash expands `$` variables inside double quotes (e.g., `$SERVER_TS` is intentionally expanded, but `$PWD` in the injected code must be literal)
+2. JavaScript template literal backticks inside bash double quotes
+3. Escaped newlines (`\\n` vs `\n`) behave differently depending on whether bash or JavaScript processes them first
+
+Current code has `\\\\n` in some places (double-escaped for bash + JS), which produces literal `\\n` in the output instead of actual newlines. This is visible in the patched server.ts where error messages contain literal backslash-n instead of newlines.
 
 **Why it happens:**
-New code that checks `process.env.CLAUDE_PROJECT_DIR` fails to handle the `undefined` case gracefully. The fallback path ("if no local file, use global") is the correct behavior but requires deliberate defensive coding.
+Nested quoting contexts (bash > bun -e > JavaScript template literal > regex) make it nearly impossible to reason about escaping correctly. Every layer interprets escape sequences differently.
 
-**How to avoid:**
-Treat the env var as optional. If `CLAUDE_PROJECT_DIR` is unset or the resulting local access.json path doesn't exist, silently fall through to global. Log a single line to stderr only in debug/verbose mode. Never fail-fast on missing env var for this feature — the old behavior must be preserved exactly.
+**Prevention:**
+1. **Move the patching logic to a standalone JS/TS file** instead of inlining it in bash. The apply script calls `bun run scripts/patch-server.ts "$SERVER_TS"` instead of `bun -e "..."`. This eliminates the bash-JS quoting interaction entirely.
+2. If inline is required, use a heredoc with single-quoted delimiter (`bun -e "$(cat <<'PATCH_EOF' ... PATCH_EOF)"`) to prevent bash expansion inside the script body.
 
 **Warning signs:**
-- Existing users (no local access.json) start getting `DISCORD_BOT_TOKEN required` or similar boot errors after update
-- Server exits with nonzero on startup for users who haven't set `CLAUDE_PROJECT_DIR`
-- Global-only users see "local access.json not found" errors in stderr
+- Patched code contains literal `\\n` instead of newline characters
+- Regex replacements silently don't match because escape sequences differ
+- `$PWD` in the injected JavaScript is expanded by bash to the script runner's directory instead of being preserved as a literal
 
-**Phase to address:**
-Phase 1 — the fallback logic must be in the very first diff; never ship the env var check without the graceful fallback on the same commit.
+**Phase to address:** Phase 1 (install script rewrite).
 
 ---
 
-### Pitfall 6: The approved/ Polling Directory Is Tied to STATE_DIR
+### Pitfall 6: `${PWD}` vs `${CLAUDE_PROJECT_DIR}` in `.mcp.json` env Block
 
 **What goes wrong:**
-The server polls `~/.claude/channels/discord/approved/` every 5 seconds to send pairing confirmations. This directory is derived from `STATE_DIR`. If the server is in local mode and the skill writes the approval file to the global `approved/` dir (because the skill didn't get the memo about local scoping), the polling loop never fires and the pairing confirmation DM is never sent. The user is approved but gets no "Paired!" message.
+The original reference patch (`patches/discord-local-scoping.patch`) used:
+```json
+"env": {
+  "DISCORD_PROJECT_DIR": "${PWD}"
+}
+```
+This relies on Claude Code's template substitution expanding `${PWD}`. But the official MCP integration docs only document two categories of variables for expansion:
+1. **Magic variables:** `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, `${CLAUDE_PLUGIN_DATA}`
+2. **User env vars:** `${MY_API_KEY}` etc. -- expanded from the user's shell environment
+
+`PWD` falls into category 2 -- it would be expanded from the user's shell environment. But the question is: which shell environment? Claude Code may not inherit the terminal's `PWD` if it was launched via an app launcher, IDE integration, or background process. And `PWD` may not be the project directory even if it is set -- the user might have `cd`'d somewhere else before launching.
+
+`CLAUDE_PROJECT_DIR` is category 1 -- a magic variable that Claude Code explicitly sets to the project root regardless of how it was launched. This is always correct.
+
+**Prevention:**
+Always use `${CLAUDE_PROJECT_DIR}` in `.mcp.json` env blocks for the project directory. Never use `${PWD}`, `${HOME}/...`, or any shell-specific path variable.
+
+**Phase to address:** Phase 1 -- the `.mcp.json` patch must use the correct variable.
+
+---
+
+### Pitfall 7: Plugin Cache Wipe on Update Requires Re-Patching
+
+**What goes wrong:**
+Files in `~/.claude/plugins/cache/` are overwritten when the plugin updates. Both `server.ts` and `.mcp.json` changes are lost. The previous milestone relied on a SessionStart hook to re-apply patches, but that hook was part of the reverted v1.1 changes.
 
 **Why it happens:**
-`APPROVED_DIR` is computed once at module load from `STATE_DIR`. If the skill and server compute different `STATE_DIR` values, the handshake breaks. The approval flow is a file-based IPC contract between two separate processes.
+The plugin cache is designed as a disposable artifact -- Claude Code manages it, and plugins are expected to be self-contained. Patching cached files is inherently fragile because the cache is not a stable surface.
 
-**How to avoid:**
-Make the skill write the approval file to the same `approved/` dir the server is polling. This means the skill must discover the server's active `STATE_DIR` — the sentinel file approach from Pitfall 3 covers this. Alternatively, always use the global `approved/` dir for the handshake (it's user-level, not project-level) and only scope `access.json` itself.
+**Prevention:**
+1. **Install script must be re-runnable:** The user (or a hook) must be able to run the install script after any plugin update. The script must handle version changes gracefully.
+2. **SessionStart hook for auto-repair:** Register a hook that runs the install script on every session start. This ensures patches are always fresh. But the hook itself lives outside the cache (in the project or user's `.claude/` config), so it survives cache wipes.
+3. **Detect unpatched state:** The server.ts code should log clearly when `DISCORD_PROJECT_DIR` is not set, making it obvious when patches need to be re-applied rather than silently falling back.
 
 **Warning signs:**
-- `/discord:access pair <code>` succeeds (access.json updated) but user never receives "Paired!" DM
-- Files accumulate in `~/.claude/channels/discord/approved/` without being cleaned up
-- `approved/` dir under `.claude/channels/discord/` stays empty even after pairing
+- Features stop working after a Claude Code update with no code changes in the project
+- Plugin version number in cache changes (e.g., `0.0.1` -> `0.0.4`)
+- `server.ts` modification timestamp matches plugin release date, not last patch date
 
-**Phase to address:**
-Phase 2 (skill update) — the simplest fix is to keep `approved/` always at the global path and only scope `access.json`.
-
----
-
-## Technical Debt Patterns
-
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| Edit server.ts directly in plugin cache | Fastest path to working code | Silently lost on plugin update | Never — always upstream or use external sidecar |
-| Hardcode local access.json path as `.claude/channels/discord/access.json` | Simple, predictable | Can't be configured per-project if project layout changes | Acceptable for v1 with documentation |
-| Read active-scope sentinel file from disk on every gate() call | No in-memory state to get stale | Extra fs read per Discord message | Acceptable — same pattern as existing readAccessFile() |
-| Skip updating SKILL.md and rely on users manually specifying paths | Faster to ship | Skill and server immediately desync; feature is broken by default | Never — skill update is required for the feature to be usable |
+**Phase to address:** Phase 1 (install script) and Phase 2 (hook registration).
 
 ---
 
-## Integration Gotchas
+## Moderate Pitfalls
 
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| Claude Code plugin launch config | Assuming env vars from the user's shell are forwarded | Only `CLAUDE_PLUGIN_ROOT` is guaranteed; project dir must be explicitly injected via the launch config |
-| MCP server + skill (SKILL.md) | Treating them as the same process | They are separate: server is a long-running Bun process; skill is a Claude prompt tool. They share only the filesystem |
-| access.json + STATIC mode | STATIC snapshots at boot — local file changes after startup are ignored | Always restart the server after writing a new local access.json; document this to users |
-| approved/ polling IPC | Assuming server and skill agree on STATE_DIR | The approval handshake is a two-party filesystem contract; both parties must resolve to the same directory |
-| Discord bot (single shared) | Adding per-session bot reconnects | There is one bot, one gateway connection. Filtering is server-side in the gate() function, not at the Discord API level |
+### Pitfall 8: `delete discord.env` in Apply Script Removes Upstream env Block
 
----
+**What goes wrong:**
+Line 141 of `apply-discord-patch.sh`:
+```javascript
+delete discord.env;
+```
+This removes the entire `env` block from the discord MCP server config. If a future plugin version adds env vars (e.g., for feature flags or debugging), the patch will strip them. This is unnecessary with the `${CLAUDE_PROJECT_DIR}` approach, which only adds to the env block rather than replacing the command structure.
 
-## Security Mistakes
+**Prevention:**
+Use additive patching: add `DISCORD_PROJECT_DIR` to the existing `env` block (creating it if absent) rather than restructuring the command/args and deleting env:
+```javascript
+discord.env = discord.env || {};
+discord.env.DISCORD_PROJECT_DIR = '${CLAUDE_PROJECT_DIR}';
+```
 
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| Storing local access.json at a world-readable path | Other users on the machine can read the allowlist and channel IDs | Create `.claude/channels/discord/` with mode 0o700, matching the existing global dir convention |
-| Trusting `CLAUDE_PROJECT_DIR` env var for path traversal | Malicious env could point to a path outside the project (e.g., `../../.ssh/`) | Validate that the resolved local access.json path is actually inside the project directory before reading/writing |
-| Leaking local scope sentinel file via the assertSendable guard | If the sentinel file is inside STATE_DIR, the existing `assertSendable` guard already blocks it; if outside, it's exposed | Place the sentinel file inside STATE_DIR (same protection) or in the project `.claude/` dir (outside server reach) |
-| Allowing the local access.json path to be set via Discord message | Prompt injection from an allowlisted Discord user could redirect the active config | The active scope must be set only at server boot via env var, not via any tool or channel message |
-
----
-
-## UX Pitfalls
-
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| Silent fallback to global with no indication | User creates a local access.json, it silently doesn't load; they spend an hour debugging | Log one line to stderr at boot: "using local access.json at <path>" or "no local access.json found, using global" |
-| `/discord:access` status shows global file when local is active | User can't tell which file controls what they're seeing | Status output must show "Active config: LOCAL (.claude/channels/discord/access.json)" vs "Active config: GLOBAL (~/.claude/channels/discord/access.json)" |
-| group rm operates on wrong file | User removes a group from the global file but it was defined in the local file (or vice versa); removal silently does nothing | The skill must identify which file contains the group before removing it |
-| No error when local access.json is malformed JSON | Falls back to global silently — user thinks local scope is working but isn't | Log a clear warning: "local access.json is malformed, falling back to global" |
+**Phase to address:** Phase 1 (install script rewrite).
 
 ---
 
-## "Looks Done But Isn't" Checklist
+### Pitfall 9: Skill-Server Config File Desync
 
-- [ ] **Local scope loading:** Verify with `process.stderr` log line at boot — not just that the code path exists, but that it actually fires with a real project dir
-- [ ] **Skill desync:** After adding a group with `/discord:access group add`, check which file was written — confirm it's the same file the server is reading
-- [ ] **Pairing confirmation:** After `/discord:access pair <code>` in local mode, verify the "Paired!" DM actually arrives — tests the approved/ IPC path
-- [ ] **Plugin update resilience:** Simulate a plugin cache clear; verify local scoping still works (logic is not in the cache)
-- [ ] **Backward compat:** In a session with no local access.json and no `CLAUDE_PROJECT_DIR`, verify exact same behavior as before the change
-- [ ] **STATIC mode + local:** In `DISCORD_ACCESS_MODE=static`, verify the local file snapshot is taken at boot and not re-read
+**What goes wrong:**
+The `/discord:access` skill edits access.json based on `printenv DISCORD_PROJECT_DIR`. But `DISCORD_PROJECT_DIR` is an env var set on the MCP server process, not on hook/skill processes. The skill runs in a different process context (Claude's tool execution environment), and `printenv` in that context may not show the same env vars as the MCP server.
 
----
+**Prevention:**
+The skill should use `${CLAUDE_PROJECT_DIR}` (available in the Claude Code session environment) to discover the project directory, not `DISCORD_PROJECT_DIR` (which is a server-specific env var). This means the SKILL.md patch should reference `CLAUDE_PROJECT_DIR` in its scope resolution logic.
 
-## Recovery Strategies
+**Warning signs:**
+- `printenv DISCORD_PROJECT_DIR` returns empty in skill context
+- Skill writes to global access.json while server reads local
+- `group add --local` creates the file but server doesn't see it
 
-| Pitfall | Recovery Cost | Recovery Steps |
-|---------|---------------|----------------|
-| Plugin cache overwrite erases server.ts changes | HIGH | Re-apply the diff to server.ts; if no upstream PR exists, maintain a patch file or git stash in the project repo |
-| Skill-server desync (wrong file edited) | LOW | Manually copy groups/allowlist entries between global and local access.json; restart server |
-| Local access.json corruption | LOW | Delete local file; server falls back to global; recreate local config via `/discord:access` |
-| approved/ IPC broken (no pairing confirmation) | LOW | Manually add senderId to allowFrom in the correct access.json; no DM confirmation but access works |
-| Project dir env var not set (new session after config change) | MEDIUM | Add `CLAUDE_PROJECT_DIR` to the plugin launch invocation; restart session |
+**Phase to address:** Phase 2 (skill update).
 
 ---
 
-## Pitfall-to-Phase Mapping
+### Pitfall 10: Bash `sort -V` Unavailability
 
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| Wrong cwd / project dir discovery | Phase 1: server-side scoping | Boot log shows correct project path; local file loads |
-| Plugin cache overwrite | Phase 1: code residency decision | Simulate cache clear; feature still works |
-| Shared bot race on saveAccess | Phase 1: document concurrency model | Two simultaneous pairings don't corrupt access.json |
-| Backward compat break | Phase 1: fallback logic | Session without env var behaves identically to v0 |
-| Skill-server desync | Phase 2: skill update | group add writes to the file server is reading |
-| approved/ IPC mismatch | Phase 2: skill update | Pairing confirmation DM fires after pair command |
-| Silent fallback with no log | Phase 1: observability | Boot stderr clearly states which file is active |
+**What goes wrong:**
+The version discovery uses `ls -1 "$PLUGIN_BASE" | sort -V | tail -1`. The `-V` (version sort) flag is a GNU coreutils extension. On macOS (which this project runs on), `sort -V` is available in modern versions but was not always present. If the user has an older `sort` or uses a minimal shell, version sorting falls back to lexicographic, which sorts `0.0.4` before `0.0.10` incorrectly.
+
+**Prevention:**
+For the current plugin (versions like `0.0.1`, `0.0.4`), lexicographic sort happens to work. But for robustness, use `ls -1t` (sort by modification time, newest first) with `head -1` instead. Or explicitly handle the case where only one version directory exists (which is the common case).
+
+**Phase to address:** Phase 1 (minor hardening).
+
+---
+
+## Minor Pitfalls
+
+### Pitfall 11: `.mcp.json` Format Assumption
+
+**What goes wrong:**
+The patching script assumes `.mcp.json` has a specific structure: `{ mcpServers: { discord: { command, args, env } } }`. If the upstream format changes (e.g., top-level keys without `mcpServers` wrapper, or renamed server key), the patch silently produces broken JSON.
+
+**Prevention:**
+Add defensive checks: verify `mcp.mcpServers?.discord` exists before modifying. Error clearly if the structure is unexpected.
+
+**Phase to address:** Phase 1.
+
+---
+
+### Pitfall 12: No Rollback Mechanism
+
+**What goes wrong:**
+If the install script breaks the plugin, there's no undo. The user must wait for a plugin cache refresh or manually restore the original files.
+
+**Prevention:**
+Back up original files before patching (e.g., `server.ts.orig`, `.mcp.json.orig`). Provide an uninstall script that restores from backups. The current repo has uninstall logic, but it was reverted with v1.1.
+
+**Phase to address:** Phase 1 (include with install script).
+
+---
+
+## Phase-Specific Warnings
+
+| Phase Topic | Likely Pitfall | Mitigation |
+|-------------|---------------|------------|
+| .mcp.json patching | Using $PWD or sh -c instead of ${CLAUDE_PROJECT_DIR} env block | Use official template variable; test by checking process.env at boot |
+| server.ts patching | Regex anchors broken by upstream version change | Pin expected version; fail loudly on anchor miss; verify coherence post-patch |
+| Install script | Partial application leaves incoherent state | Post-patch coherence check; versioned markers |
+| Install script | Nested bash/JS quoting causes silent escaping bugs | Move patch logic to standalone .ts file |
+| SKILL.md patching | Skill uses DISCORD_PROJECT_DIR which only exists in server process | Skill should use CLAUDE_PROJECT_DIR instead |
+| SessionStart hook | Hook itself in plugin cache gets wiped | Hook config lives in project .claude/ settings, not in cache |
+| Plugin version change | 0.0.1 -> 0.0.4 already happened; anchors may have shifted | Inspect current version's server.ts before writing patch logic |
+| Backward compatibility | Projects without local access.json break | Env var and local file both optional; graceful fallback to global |
+
+---
+
+## Post-Mortem: Why v1.1 Failed
+
+**Root cause (most likely):** The `sh -c` wrapper with `$PWD` does not capture the project directory because Claude Code spawns MCP server processes with a working directory that is not the project root. The `$PWD` shell variable reflects whatever cwd the process was given, which is likely the plugin root or Claude Code's own working directory.
+
+**Contributing factors:**
+1. The approach was never tested end-to-end with a real MCP server launch -- the `$PWD` assumption was plausible but unverified.
+2. The official mechanism (`${CLAUDE_PROJECT_DIR}` in `.mcp.json` env/args) was documented but overlooked in favor of the `sh -c` workaround.
+3. No boot-time diagnostic logged the actual value of `DISCORD_PROJECT_DIR`, making the failure invisible -- the server just silently fell back to global config.
+4. The v1.1 release bundled multiple features (greeting, install/uninstall) with the broken core mechanism, so the revert had to roll back everything.
+
+**Key lesson:** When Claude Code provides a first-party mechanism (template variable expansion in `.mcp.json`), use it. Shell-level workarounds add indirection that is hard to test and interacts unpredictably with the host's process management.
 
 ---
 
 ## Sources
 
-- Direct code inspection: `~/.claude/plugins/cache/claude-plugins-official/discord/0.0.1/server.ts` — lines 32–36 (STATE_DIR/ACCESS_FILE constants), 184–190 (saveAccess), 314–354 (checkApprovals polling), 166–178 (STATIC mode snapshot)
-- Direct code inspection: `~/.claude/plugins/cache/claude-plugins-official/discord/0.0.1/skills/access/SKILL.md` — hardcoded `~/.claude/channels/discord/access.json` path throughout
-- Project context: `.planning/PROJECT.md` — "Key challenge: the server's cwd is set to CLAUDE_PLUGIN_ROOT, not the project directory"
-- Project context: `.planning/PROJECT.md` — "Plugin cache: Files in ~/.claude/plugins/cache/ may be overwritten on plugin updates"
-- General: MCP server stdio transport design — server process is spawned per session with no shared memory
+- Direct inspection: `~/.claude/plugins/cache/claude-plugins-official/discord/0.0.4/.mcp.json` -- shows current patched state with `sh -c` wrapper (the broken approach)
+- Direct inspection: `~/.claude/plugins/cache/claude-plugins-official/discord/0.0.4/server.ts` -- confirms server.ts patches are applied but env var is not reaching the process
+- Direct inspection: `scripts/apply-discord-patch.sh` -- the broken install script
+- Direct inspection: `patches/discord-local-scoping.patch` -- the original reference patch using `"${PWD}"` in env block
+- Official: `plugins/plugin-dev/skills/mcp-integration/examples/stdio-server.json` -- shows `${CLAUDE_PROJECT_DIR}` as the correct way to pass project dir in MCP config; HIGH confidence
+- Official: `plugins/plugin-dev/skills/mcp-integration/SKILL.md` -- documents env var substitution in `.mcp.json`; HIGH confidence
+- Official: `plugins/plugin-dev/skills/hook-development/SKILL.md` line 326 -- confirms `$CLAUDE_PROJECT_DIR` is available in hook context; HIGH confidence
+- Changelog: `~/.claude/cache/changelog.md` line 2111 -- v1.0.58 added `CLAUDE_PROJECT_DIR` for hooks; HIGH confidence
+- Git history: `46a7b6d` revert commit -- confirms v1.1 was rolled back completely
 
 ---
 
 *Pitfalls research for: MCP plugin project-local config scoping (Discord)*
-*Researched: 2026-03-23*
+*Researched: 2026-03-25*
+*Previous version: 2026-03-23 (pre-v1.1 failure)*
