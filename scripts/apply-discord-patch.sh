@@ -29,22 +29,16 @@ SKILL_MD="$PLUGIN_DIR/skills/access/SKILL.md"
 MARKER="// discord-local-scoping patch applied"
 SKILL_MARKER="## Scope resolution"
 MCP_MARKER="DISCORD_PROJECT_DIR"
-REPLY_MARKER="// quote-reply context patch applied"
-GREETING_MARKER="// session-greeting patch applied"
 
 # Check what's already applied
 server_patched=false
 mcp_patched=false
 skill_patched=false
-reply_patched=false
-greeting_patched=false
 grep -qF "$MARKER" "$SERVER_TS" 2>/dev/null && server_patched=true
 grep -qF "$MCP_MARKER" "$MCP_JSON" 2>/dev/null && mcp_patched=true
 grep -qF "$SKILL_MARKER" "$SKILL_MD" 2>/dev/null && skill_patched=true
-grep -qF "$REPLY_MARKER" "$SERVER_TS" 2>/dev/null && reply_patched=true
-grep -qF "$GREETING_MARKER" "$SERVER_TS" 2>/dev/null && greeting_patched=true
 
-if $server_patched && $mcp_patched && $skill_patched && $reply_patched && $greeting_patched; then
+if $server_patched && $mcp_patched && $skill_patched; then
   echo "discord-channel: patch already applied to $LATEST_VERSION — skipping" >&2
   exit 0
 fi
@@ -59,16 +53,11 @@ if ! $server_patched && [[ -f "$SERVER_TS" ]]; then
     const fs = require('fs');
     let src = fs.readFileSync('$SERVER_TS', 'utf8');
 
-    // Add dirname/basename import
+    // Add dirname import
     if (!src.includes('dirname')) {
       src = src.replace(
         /import \{ join, sep \} from 'path'/,
-        \"import { join, sep, dirname, basename } from 'path'\"
-      );
-    } else if (!src.includes('basename')) {
-      src = src.replace(
-        /import \{ join, sep, dirname \} from 'path'/,
-        \"import { join, sep, dirname, basename } from 'path'\"
+        \"import { join, sep, dirname } from 'path'\"
       );
     }
 
@@ -81,7 +70,7 @@ if ! $server_patched && [[ -f "$SERVER_TS" ]]; then
     const resolveBlock = \`
 
 // discord-local-scoping patch applied
-// Project dir: injected via .mcp.json env block using CLAUDE_PROJECT_DIR variable substitution.
+// Project dir: injected via sh wrapper in .mcp.json that captures \\\$PWD before --cwd changes it.
 const PROJECT_DIR = process.env.DISCORD_PROJECT_DIR || undefined
 
 function resolveAccessFile() {
@@ -145,11 +134,11 @@ if ! $mcp_patched && [[ -f "$MCP_JSON" ]]; then
     const fs = require('fs');
     const mcp = JSON.parse(fs.readFileSync('$MCP_JSON', 'utf8'));
     const discord = mcp.mcpServers.discord;
-    // Use CLAUDE_PROJECT_DIR env var substitution — Claude Code expands this
-    // before launching the process, so it's reliable regardless of cwd changes.
-    discord.command = 'bun';
-    discord.args = ['run', '--cwd', '\${CLAUDE_PLUGIN_ROOT}', '--shell=bun', '--silent', 'start'];
-    discord.env = { DISCORD_PROJECT_DIR: '\${CLAUDE_PROJECT_DIR}' };
+    // Use sh wrapper to capture PWD before --cwd changes it
+    const pluginRoot = '\${CLAUDE_PLUGIN_ROOT}';
+    discord.command = 'sh';
+    discord.args = ['-c', 'DISCORD_PROJECT_DIR=\$PWD exec bun run --cwd \\'' + pluginRoot + '\\' --shell=bun --silent start'];
+    delete discord.env;
     fs.writeFileSync('$MCP_JSON', JSON.stringify(mcp, null, 2) + '\\n');
   "
   echo "discord-channel: .mcp.json patched" >&2
@@ -164,120 +153,6 @@ if ! $skill_patched && [[ -f "$SKILL_MD" ]]; then
   else
     echo "discord-channel: patches/SKILL.md not found in repo — skipping SKILL.md patch" >&2
   fi
-fi
-
-# Apply quote-reply context patch — includes referenced message content in notifications
-if ! $reply_patched && [[ -f "$SERVER_TS" ]]; then
-  bun -e "
-    const fs = require('fs');
-    let src = fs.readFileSync('$SERVER_TS', 'utf8');
-
-    // Find the notification block in handleInbound and inject referenced message fetching before it.
-    // We look for the 'mcp.notification({' call that sends 'notifications/claude/channel'
-    // and wrap it with logic to fetch the referenced message.
-
-    const anchor = \"  mcp.notification({\\n    method: 'notifications/claude/channel',\";
-    if (!src.includes(anchor)) {
-      // Try alternate spacing
-      const anchor2 = \"mcp.notification({\\n    method: 'notifications/claude/channel',\";
-      if (!src.includes(anchor2)) {
-        process.stderr.write('discord-channel: could not find notification anchor for quote-reply patch — skipping\\n');
-        process.exit(0);
-      }
-    }
-
-    // Replace the notification section to add referenced message context.
-    // The original code (around the notification call):
-    //   const content = msg.content || (atts.length > 0 ? '(attachment)' : '')
-    //   mcp.notification({ method: 'notifications/claude/channel', params: { content, meta: { ... } } })
-    //
-    // We inject code between content assignment and the notification to:
-    // 1. Check msg.reference for a quoted message
-    // 2. Fetch the referenced message content
-    // 3. Add reply_to_id, reply_to_user, reply_to_content to meta
-
-    const oldContentLine = \"const content = msg.content || (atts.length > 0 ? '(attachment)' : '')\";
-    if (!src.includes(oldContentLine)) {
-      process.stderr.write('discord-channel: could not find content assignment for quote-reply patch — skipping\\n');
-      process.exit(0);
-    }
-
-    // Make handleInbound async-aware for the referenced message fetch
-    // and add the reply context fields to meta
-    const newBlock = oldContentLine + \`
-
-  // quote-reply context patch applied
-  // When the user quote-replies to a message, fetch the referenced message
-  // and include its content in the notification metadata.
-  let reply_to_id = undefined
-  let reply_to_user = undefined
-  let reply_to_content = undefined
-  if (msg.reference && msg.reference.messageId) {
-    try {
-      const refMsg = await msg.channel.messages.fetch(msg.reference.messageId)
-      reply_to_id = refMsg.id
-      reply_to_user = refMsg.author.username
-      const preview = refMsg.content.length > 500 ? refMsg.content.slice(0, 500) + '...' : refMsg.content
-      reply_to_content = preview
-    } catch (e) {
-      process.stderr.write('discord channel: failed to fetch referenced message: ' + e + '\\\\n')
-    }
-  }
-\`;
-
-    src = src.replace(oldContentLine, newBlock);
-
-    // Now add the reply fields to the meta object in the notification
-    const oldMeta = \"...(atts.length > 0 ? { attachment_count: String(atts.length), attachments: atts.join('; ') } : {}),\";
-    if (src.includes(oldMeta)) {
-      src = src.replace(
-        oldMeta,
-        oldMeta + \`
-        ...(reply_to_id ? { reply_to_id, reply_to_user, reply_to_content } : {}),\`
-      );
-    } else {
-      process.stderr.write('discord-channel: could not find meta spread for reply fields — reply context will not be included\\n');
-    }
-
-    fs.writeFileSync('$SERVER_TS', src);
-  "
-  echo "discord-channel: quote-reply context patched" >&2
-fi
-
-# Apply session greeting patch — sends greeting to configured channels on ready
-if ! $greeting_patched && [[ -f "$SERVER_TS" ]]; then
-  bun -e "
-    const fs = require('fs');
-    let src = fs.readFileSync('$SERVER_TS', 'utf8');
-
-    const regex = /client\.once\('ready', c => \{\s*\n\s*process\.stderr\.write\(\x60discord channel: gateway connected as \\\$\{c\.user\.tag\}\\\\n\x60\)\s*\n\s*\}\)/;
-
-    if (!regex.test(src)) {
-      process.stderr.write('discord-channel: could not find ready handler for greeting patch — skipping\n');
-      process.exit(0);
-    }
-
-    src = src.replace(regex, \`client.once('ready', c => {
-  // session-greeting patch applied
-  process.stderr.write(\\\`discord channel: gateway connected as \\\${c.user.tag}\\\\n\\\`)
-  const access = loadAccess()
-  const groupIds = Object.keys(access.groups)
-  if (groupIds.length > 0) {
-    process.stderr.write(\\\`discord channel: listening to \\\${groupIds.length} channel(s): \\\${groupIds.join(', ')}\\\\n\\\`)
-    const projectName = PROJECT_DIR ? basename(PROJECT_DIR) : 'unknown project'
-    for (const chId of groupIds) {
-      c.channels.fetch(chId).then(ch => {
-        if (ch && ch.isTextBased()) ch.send(\\\`session started — listening on **\\\${projectName}**\\\`)
-      }).catch(e => process.stderr.write(\\\`discord channel: failed to send greeting to \\\${chId}: \\\${e}\\\\n\\\`))
-    }
-  } else {
-    process.stderr.write(\\\`discord channel: no group channels configured\\\\n\\\`)
-  }
-})\`);
-
-    fs.writeFileSync('$SERVER_TS', src);
-  "
-  echo "discord-channel: session greeting patched" >&2
 fi
 
 echo "discord-channel: patch complete for version $LATEST_VERSION" >&2

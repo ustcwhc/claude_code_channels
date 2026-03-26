@@ -42,30 +42,81 @@ git clone https://github.com/ustcwhc/claude_code_channels.git
 cd claude_code_channels
 ```
 
-### 3. Install
+### 3. Run the patch script
 
 ```bash
-./scripts/install.sh
+./scripts/apply-discord-patch.sh
 ```
 
-This applies the local-scoping patch to the Discord plugin and registers a SessionStart hook in `~/.claude/settings.json`:
-- **apply-discord-patch.sh** — re-applies the patch after plugin updates
+This applies the local-scoping patch to your installed Discord plugin (in `~/.claude/plugins/cache/`). The script is **idempotent** — safe to run multiple times.
 
-Session greetings are sent automatically by the patched `server.ts` when the Discord gateway connects — this only happens when `--channels plugin:discord@claude-plugins-official` is active.
+### 4. Set up the SessionStart hook
 
-The script is **idempotent** — safe to run multiple times. It appends to your existing hooks without replacing them.
+Add the following to your Claude Code settings so the patch is automatically re-applied after plugin updates:
 
-### 4. Add channels to a project
+**Option A: Project-level** — add to `.claude/settings.json` in your project:
 
-From a Claude Code session in your project directory, run:
-
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/claude_code_channels/scripts/apply-discord-patch.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
-/discord:access group add <channelId> --local
+
+**Option B: Global (recommended)** — add to `~/.claude/settings.json` to apply across all projects:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/claude_code_channels/scripts/apply-discord-patch.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
 
-This creates the project-local config (`.claude/channels/discord/access.json`) automatically and adds the channel to it. You can also omit `--local` and the skill will prompt you to choose local vs global.
+Replace `/path/to/claude_code_channels` with the actual absolute path where you cloned this repo.
 
-### 5. Add to `.gitignore`
+> **Note:** If you already have a `SessionStart` hook in your settings, add the new hook entry to the existing `"hooks"` array rather than replacing it.
+
+### 5. Create a project-local access config
+
+In your project directory, create the local access file:
+
+```bash
+mkdir -p .claude/channels/discord
+cat > .claude/channels/discord/access.json << 'EOF'
+{
+  "dmPolicy": "pairing",
+  "allowFrom": [],
+  "pending": {},
+  "groups": {}
+}
+EOF
+```
+
+Then use `/discord:access group add <channelId> --local` to add channels scoped to this project.
+
+### 6. Add to `.gitignore`
 
 The local access config contains Discord channel/user IDs — add it to your project's `.gitignore`:
 
@@ -95,21 +146,10 @@ claude_code_channels/
 │   ├── discord-local-scoping.patch    # Unified diff for reference (server.ts, .mcp.json, SKILL.md)
 │   └── SKILL.md                       # Full patched access skill with scope-awareness
 ├── scripts/
-│   ├── install.sh                     # One-command install (patch + hooks)
-│   ├── uninstall.sh                   # Removes patches and hooks
-│   ├── apply-discord-patch.sh         # Idempotent patch script (SessionStart hook target)
-│   └── discord-session-greeting.sh    # Legacy no-op (greeting now in server.ts)
+│   └── apply-discord-patch.sh         # Idempotent apply script (SessionStart hook target)
 ├── CLAUDE.md                          # Project config for Claude Code sessions
 └── README.md
 ```
-
-## Uninstall
-
-```bash
-./scripts/uninstall.sh
-```
-
-This removes the patched plugin files (Claude Code re-downloads clean copies on next start) and removes the SessionStart hooks from `~/.claude/settings.json`. Project-local `access.json` files are left in place.
 
 ## Constraints
 
