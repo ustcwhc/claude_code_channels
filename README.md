@@ -86,6 +86,11 @@ Add the following to your Claude Code settings so the patch is automatically re-
             "type": "command",
             "command": "/path/to/claude_code_channels/scripts/apply-discord-patch.sh",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "/path/to/claude_code_channels/scripts/discord-session-greeting.sh",
+            "timeout": 10
           }
         ]
       }
@@ -96,25 +101,19 @@ Add the following to your Claude Code settings so the patch is automatically re-
 
 Replace `/path/to/claude_code_channels` with the actual absolute path where you cloned this repo.
 
-> **Note:** If you already have a `SessionStart` hook in your settings, add the new hook entry to the existing `"hooks"` array rather than replacing it.
+The first hook re-applies the patch after plugin updates. The second sends a greeting message to your configured Discord channels when a session starts, so you know which project the bot is listening on.
 
-### 5. Create a project-local access config
+> **Note:** If you already have a `SessionStart` hook in your settings, add the new hook entries to the existing `"hooks"` array rather than replacing it.
 
-In your project directory, create the local access file:
+### 5. Add channels to a project
 
-```bash
-mkdir -p .claude/channels/discord
-cat > .claude/channels/discord/access.json << 'EOF'
-{
-  "dmPolicy": "pairing",
-  "allowFrom": [],
-  "pending": {},
-  "groups": {}
-}
-EOF
+From a Claude Code session in your project directory, run:
+
+```
+/discord:access group add <channelId> --local
 ```
 
-Then use `/discord:access group add <channelId> --local` to add channels scoped to this project.
+This creates the project-local config (`.claude/channels/discord/access.json`) automatically and adds the channel to it. You can also omit `--local` and the skill will prompt you to choose local vs global.
 
 ### 6. Add to `.gitignore`
 
@@ -146,7 +145,8 @@ claude_code_channels/
 │   ├── discord-local-scoping.patch    # Unified diff for reference (server.ts, .mcp.json, SKILL.md)
 │   └── SKILL.md                       # Full patched access skill with scope-awareness
 ├── scripts/
-│   └── apply-discord-patch.sh         # Idempotent apply script (SessionStart hook target)
+│   ├── apply-discord-patch.sh         # Idempotent apply script (SessionStart hook target)
+│   └── discord-session-greeting.sh    # Sends greeting to Discord channels on session start
 ├── CLAUDE.md                          # Project config for Claude Code sessions
 └── README.md
 ```
