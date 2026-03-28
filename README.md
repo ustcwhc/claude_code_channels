@@ -4,14 +4,18 @@ An upgrade to the [Claude Code](https://claude.com/claude-code) official Discord
 
 ## How It Works
 
-- A unified diff patch modifies the Discord plugin's `server.ts`, `.mcp.json`, and access skill (`SKILL.md`).
-- On startup, the patched server checks for a **project-local** `access.json` inside the current project directory. If found, it uses that instead of the global config.
-- A **SessionStart hook** re-applies the patch automatically whenever the plugin cache is refreshed (e.g., after plugin updates).
+- `scripts/install.sh` patches the installed Discord plugin's `server.ts`, `.mcp.json`, and access skill (`SKILL.md`).
+- `scripts/uninstall.sh` restores the original plugin files and removes the SessionStart hook.
+- The install script registers a global **SessionStart hook** so patches are re-applied automatically whenever the plugin cache is refreshed.
+- When Claude Code provides `CLAUDE_PROJECT_DIR` to the plugin process, the patched server tries `./.claude/channels/discord/access.json` for that project first.
+- On gateway connect, the patched server logs the resolved project/channel info and sends a greeting message to each configured Discord channel for that session.
 
 ### Scope Resolution Order
 
-1. If `<PROJECT_DIR>/.claude/channels/discord/access.json` exists → **local** (project-scoped)
-2. Otherwise → `~/.claude/channels/discord/access.json` (global, original behavior)
+1. If `DISCORD_PROJECT_DIR` is set by Claude Code, the session first checks `<PROJECT_DIR>/.claude/channels/discord/access.json`
+2. If that local file exists, it is used for the session
+3. If that local file is missing or cannot be inspected, the server warns and falls back to `~/.claude/channels/discord/access.json`
+4. If `DISCORD_PROJECT_DIR` is not set, the session uses `~/.claude/channels/discord/access.json`
 
 ## Prerequisites
 
@@ -42,65 +46,21 @@ git clone https://github.com/ustcwhc/claude_code_channels.git
 cd claude_code_channels
 ```
 
-### 3. Run the patch script
+### 3. Run the installer
 
 ```bash
-./scripts/apply-discord-patch.sh
+./scripts/install.sh
 ```
 
-This applies the local-scoping patch to your installed Discord plugin (in `~/.claude/plugins/cache/`). The script is **idempotent** — safe to run multiple times.
+This patches the installed Discord plugin in `~/.claude/plugins/cache/claude-plugins-official/discord/<version>/`, creates backup copies of the original files, and registers the SessionStart hook in `~/.claude/settings.json`.
 
-### 4. Set up the SessionStart hook
+The installer is **idempotent**:
+- running it again skips already-applied components
+- if the Discord plugin is not installed yet, it still registers the hook so future installs get patched automatically
 
-Add the following to your Claude Code settings so the patch is automatically re-applied after plugin updates:
+### 4. Create a project-local access config
 
-**Option A: Project-level** — add to `.claude/settings.json` in your project:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/path/to/claude_code_channels/scripts/apply-discord-patch.sh",
-            "timeout": 15
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-**Option B: Global (recommended)** — add to `~/.claude/settings.json` to apply across all projects:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/path/to/claude_code_channels/scripts/apply-discord-patch.sh",
-            "timeout": 15
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Replace `/path/to/claude_code_channels` with the actual absolute path where you cloned this repo.
-
-> **Note:** If you already have a `SessionStart` hook in your settings, add the new hook entry to the existing `"hooks"` array rather than replacing it.
-
-### 5. Create a project-local access config
-
-In your project directory, create the local access file:
+If you want a project-specific Discord channel, create the local access file in that project:
 
 ```bash
 mkdir -p .claude/channels/discord
@@ -114,19 +74,51 @@ cat > .claude/channels/discord/access.json << 'EOF'
 EOF
 ```
 
-Then use `/discord:access group add <channelId> --local` to add channels scoped to this project.
+Then add project-local channels with:
+
+```bash
+/discord:access group add <channelId> --local
+```
+
+Important behavior:
+- on startup, the plugin checks the project-local `./.claude/channels/discord/access.json` first
+- if the local `access.json` is missing, the server warns and falls back to the global config
+- if the local `access.json` is corrupt, the server exits with an error and tells you to fix or delete it
+
+### 5. Start Claude Code
+
+Start your session with channels enabled from the project directory:
+
+```bash
+claude --channels plugin:discord@claude-plugins-official
+```
+
+When the Discord gateway connects, the patched plugin:
+- logs which config path it is using
+- logs the connected channel IDs for the session
+- sends a greeting message to each configured channel
 
 ### 6. Add to `.gitignore`
 
-The local access config contains Discord channel/user IDs — add it to your project's `.gitignore`:
+The local access config contains Discord channel and user IDs, so add it to your project's `.gitignore`:
 
 ```
 .claude/channels/
 ```
 
+## Uninstall
+
+To remove the patch and hook:
+
+```bash
+./scripts/uninstall.sh
+```
+
+This restores the original plugin files from backups and removes the SessionStart hook from `~/.claude/settings.json`. It does **not** delete your project-local `access.json` files.
+
 ## Usage
 
-Once installed, the Discord plugin automatically uses project-local config when available. Use the `/discord:access` skill as usual — it now supports scope-aware operations:
+Use the `/discord:access` skill as usual. The patched skill is scope-aware:
 
 | Command | Behavior |
 |---------|----------|
@@ -138,23 +130,37 @@ Once installed, the Discord plugin automatically uses project-local config when 
 
 DM-related commands (`pair`, `deny`, `allow`, `remove`, `policy`) always operate on the global config since DMs are user-level, not project-level.
 
+At session startup, the patched server also:
+- writes the resolved config path to stderr
+- writes the connected channel IDs to stderr
+- sends `Claude Code session connected (project: <name>)` to each configured channel when a project name is available
+
 ## Architecture
 
 ```
 claude_code_channels/
-├── patches/
-│   ├── discord-local-scoping.patch    # Unified diff for reference (server.ts, .mcp.json, SKILL.md)
-│   └── SKILL.md                       # Full patched access skill with scope-awareness
 ├── scripts/
-│   └── apply-discord-patch.sh         # Idempotent apply script (SessionStart hook target)
-├── CLAUDE.md                          # Project config for Claude Code sessions
+│   ├── install.sh                    # Main installer + hook registration
+│   ├── uninstall.sh                  # Restore backups + remove hook
+│   ├── apply-discord-patch.sh        # Compatibility wrapper to install.sh
+│   ├── lib/
+│   │   └── common.sh                 # Shared helpers, backups, hook editing
+│   └── components/
+│       ├── 00-mcp-json.sh            # Inject DISCORD_PROJECT_DIR into .mcp.json
+│       ├── 10-local-scoping.sh       # Patch server.ts for project-local access.json
+│       ├── 20-skill-access.sh        # Install patched access skill
+│       └── 30-greeting.sh            # Session greeting + channel/project logging
+├── patches/
+│   ├── discord-local-scoping.patch   # Reference diff from the earlier approach
+│   └── SKILL.md                      # Full patched access skill with scope-awareness
+├── CLAUDE.md                         # Project config for Claude Code sessions
 └── README.md
 ```
 
 ## Constraints
 
 - **No new dependencies** — works with the existing Bun + discord.js stack
-- **Backward compatible** — projects without a local `access.json` work exactly as before
+- **Global behavior preserved** — sessions without project-local mode still use `~/.claude/channels/discord/access.json`
 - **Single bot token** — all sessions share one Discord bot; routing is done per-session via config scoping
 
 ## License
