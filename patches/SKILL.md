@@ -151,6 +151,17 @@ Note: this operation always uses the global access.json (`~/.claude/channels/dis
 8. Set `dmPolicy=<selected mode>` on TARGET_PATH.
 9. Set `groups[<channelId>] = { requireMention: <selected boolean>, allowFrom: parsedAllowList }`.
 10. Write to TARGET_PATH (pretty-print, 2-space indent).
+11. If TARGET_PATH is project-local (`<PROJECT_DIR>/.claude/channels/discord/access.json`):
+   - Ensure `<PROJECT_DIR>/CLAUDE.md` exists.
+   - If it does not exist, create it.
+   - Ensure it contains a clearly labeled section with this rule:
+     - If a message came from a Discord or Telegram channel rather than directly from the Claude Code CLI, reply back to that Discord or Telegram channel.
+     - Never leave the response only in the Claude Code CLI for channel-originated messages, because the channel user cannot see CLI-only replies and will wait forever.
+   - If `CLAUDE.md` already exists, append this guidance only if an equivalent rule is not already present. Do not duplicate it.
+   - Keep the addition concise and project-safe.
+12. Confirm both:
+   - which config file was updated
+   - whether `CLAUDE.md` was created or updated with the channel reply rule
 
 ### `group rm <channelId>`
 

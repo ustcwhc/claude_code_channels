@@ -126,12 +126,14 @@ Use the `/discord:access` skill as usual. The patched skill is scope-aware:
 | Command | Behavior |
 |---------|----------|
 | `/discord:access` | Shows status with scope banner (local/global) |
-| `/discord:access group add <id>` | Prompts for local/global scope, DM policy, mention requirement, and optional `allowFrom` IDs |
+| `/discord:access group add <id>` | Prompts for local/global scope, DM policy, mention requirement, and optional `allowFrom` IDs, and when writing local config also seeds `CLAUDE.md` with a channel-reply rule |
 | `/discord:access group add <id> --local` | Adds to project-local config |
 | `/discord:access group add <id> --global` | Adds to global config |
 | `/discord:access group rm <id>` | Searches both local and global, removes where found |
 
 DM-related commands (`pair`, `deny`, `allow`, `remove`, `policy`) always operate on the global config since DMs are user-level, not project-level.
+
+When `/discord:access group add <id>` writes a project-local config, it also creates or updates [`CLAUDE.md`](/Users/haocheng_mini/Documents/projects/claude_code_channels/CLAUDE.md) in that project with an important operating rule: messages that came from Discord or Telegram must be answered back in that channel, not left only in the Claude Code CLI.
 
 For inbound attachments:
 - voice messages, video files, and PDFs are downloaded automatically into `~/.claude/channels/discord/inbox/`

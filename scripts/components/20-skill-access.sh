@@ -5,7 +5,7 @@ apply() {
   local repo_dir="$2"
   local skill_md="$plugin_dir/skills/access/SKILL.md"
   local patched_skill="$repo_dir/patches/SKILL.md"
-  local upgraded_marker='--dm-policy <mode>'
+  local upgraded_marker='whether `CLAUDE.md` was created or updated with the channel reply rule'
 
   [[ -f "$skill_md" ]] || return 3
   [[ -f "$patched_skill" ]] || return 3
