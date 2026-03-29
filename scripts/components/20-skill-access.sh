@@ -5,11 +5,11 @@ apply() {
   local repo_dir="$2"
   local skill_md="$plugin_dir/skills/access/SKILL.md"
   local patched_skill="$repo_dir/patches/SKILL.md"
-  local marker="## Scope resolution"
+  local upgraded_marker='--dm-policy <mode>'
 
   [[ -f "$skill_md" ]] || return 3
   [[ -f "$patched_skill" ]] || return 3
-  grep -qF "$marker" "$skill_md" 2>/dev/null && return 2
+  grep -qF "$upgraded_marker" "$skill_md" 2>/dev/null && return 2
 
   backup_file "$skill_md" || return 3
   cp "$patched_skill" "$skill_md"

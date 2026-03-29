@@ -92,6 +92,16 @@ read_env_var() {
   awk -F= -v key="$key" '$1 == key { print substr($0, index($0, "=") + 1) }' "$DISCORD_ENV_PATH" | tail -1
 }
 
+mask_secret() {
+  local value="$1"
+  local len=${#value}
+  if (( len <= 8 )); then
+    printf '%s\n' "$value"
+  else
+    printf '%s***%s\n' "${value:0:4}" "${value: -4}"
+  fi
+}
+
 upsert_env_var() {
   local key="$1"
   local value="$2"
@@ -123,47 +133,123 @@ configure_transcription_backend() {
   [[ -n "$current_backend" ]] || current_backend="local"
   [[ -n "$current_model" ]] || current_model="whisper-1"
 
-  log "install: choose transcription backend"
-  printf '  1. Local whisper-cli (current: %s)\n' "$([[ "$current_backend" == "local" ]] && echo "selected" || echo "not selected")" >&2
-  printf '  2. OpenAI Whisper API (better multilingual support) (current: %s)\n' "$([[ "$current_backend" == "openai-whisper" ]] && echo "selected" || echo "not selected")" >&2
-  printf '  3. Keep current setting (%s)\n' "$current_backend" >&2
-  printf 'Select [1-3, default 3]: ' >&2
+  while true; do
+    log "install: choose transcription backend"
+    printf '  1. Local whisper-cli (current: %s)\n' "$([[ "$current_backend" == "local" ]] && echo "selected" || echo "not selected")" >&2
+    printf '  2. OpenAI Whisper API (better multilingual support) (current: %s)\n' "$([[ "$current_backend" == "openai-whisper" ]] && echo "selected" || echo "not selected")" >&2
+    printf '  3. Keep current setting (%s)\n' "$current_backend" >&2
+    printf 'Select [1-3, default 3]: ' >&2
 
-  local choice
-  IFS= read -r choice || return 0
-  choice="${choice:-3}"
+    local choice
+    IFS= read -r choice || return 0
+    choice="${choice:-3}"
 
-  case "$choice" in
-    1)
-      upsert_env_var "DISCORD_TRANSCRIBE_BACKEND" "local" || return 1
-      log "install: configured local whisper-cli transcription backend"
-      ;;
-    2)
-      upsert_env_var "DISCORD_TRANSCRIBE_BACKEND" "openai-whisper" || return 1
-      upsert_env_var "DISCORD_OPENAI_TRANSCRIBE_MODEL" "$current_model" || return 1
-
-      if [[ -z "${OPENAI_API_KEY:-}" ]] && [[ -z "$(read_env_var "OPENAI_API_KEY" 2>/dev/null || true)" ]]; then
-        printf 'OpenAI API key not found in shell env or %s\n' "$DISCORD_ENV_PATH" >&2
-        printf 'Enter OPENAI_API_KEY to save for Discord transcription (leave blank to skip): ' >&2
-        local openai_key
-        IFS= read -r openai_key || true
-        if [[ -n "$openai_key" ]]; then
-          upsert_env_var "OPENAI_API_KEY" "$openai_key" || return 1
-          log "install: saved OPENAI_API_KEY to $DISCORD_ENV_PATH"
-        else
-          log "install: OPENAI_API_KEY not saved; OpenAI Whisper backend will require the key in your environment"
+    case "$choice" in
+      1)
+        upsert_env_var "DISCORD_TRANSCRIBE_BACKEND" "local" || return 1
+        log "install: configured local whisper-cli transcription backend"
+        return 0
+        ;;
+      2)
+        local shell_openai_key saved_openai_key effective_openai_key key_source
+        shell_openai_key="${OPENAI_API_KEY:-}"
+        saved_openai_key="$(read_env_var "OPENAI_API_KEY" 2>/dev/null || true)"
+        effective_openai_key="$shell_openai_key"
+        key_source="shell environment"
+        if [[ -z "$effective_openai_key" && -n "$saved_openai_key" ]]; then
+          effective_openai_key="$saved_openai_key"
+          key_source="$DISCORD_ENV_PATH"
         fi
-      fi
 
-      log "install: configured OpenAI Whisper transcription backend (model: $current_model)"
-      ;;
-    3)
-      log "install: keeping existing transcription backend ($current_backend)"
-      ;;
-    *)
-      log "install: invalid transcription backend selection '$choice' - keeping current setting ($current_backend)"
-      ;;
-  esac
+        if [[ -n "$effective_openai_key" ]]; then
+          printf 'Found existing OPENAI_API_KEY from %s: %s\n' "$key_source" "$(mask_secret "$effective_openai_key")" >&2
+          printf '  1. Keep existing key (recommended)\n' >&2
+          printf '  2. Enter a new key and save it to %s\n' "$DISCORD_ENV_PATH" >&2
+          printf '  3. Continue without changing the saved key\n' >&2
+          printf '  4. Go back\n' >&2
+          printf 'Select [1-4, default 1]: ' >&2
+
+          local key_choice
+          IFS= read -r key_choice || return 0
+          key_choice="${key_choice:-1}"
+
+          case "$key_choice" in
+            1)
+              log "install: keeping existing OPENAI_API_KEY from $key_source"
+              ;;
+            2)
+              printf 'Enter new OPENAI_API_KEY to save for Discord transcription: ' >&2
+              local openai_key
+              IFS= read -r openai_key || true
+              if [[ -n "$openai_key" ]]; then
+                upsert_env_var "OPENAI_API_KEY" "$openai_key" || return 1
+                log "install: saved OPENAI_API_KEY to $DISCORD_ENV_PATH"
+              else
+                log "install: no new OPENAI_API_KEY entered; keeping existing value"
+              fi
+              ;;
+            3)
+              log "install: leaving OPENAI_API_KEY unchanged"
+              ;;
+            4)
+              continue
+              ;;
+            *)
+              log "install: invalid OPENAI_API_KEY selection '$key_choice' - returning to transcription backend menu"
+              continue
+              ;;
+          esac
+        else
+          printf 'OpenAI API key not found in shell env or %s\n' "$DISCORD_ENV_PATH" >&2
+          printf '  1. Enter OPENAI_API_KEY now and save it\n' >&2
+          printf '  2. Continue without saving a key\n' >&2
+          printf '  3. Go back\n' >&2
+          printf 'Select [1-3, default 1]: ' >&2
+
+          local missing_key_choice
+          IFS= read -r missing_key_choice || return 0
+          missing_key_choice="${missing_key_choice:-1}"
+
+          case "$missing_key_choice" in
+            1)
+              printf 'Enter OPENAI_API_KEY to save for Discord transcription (leave blank to skip): ' >&2
+              local openai_key
+              IFS= read -r openai_key || true
+              if [[ -n "$openai_key" ]]; then
+                upsert_env_var "OPENAI_API_KEY" "$openai_key" || return 1
+                log "install: saved OPENAI_API_KEY to $DISCORD_ENV_PATH"
+              else
+                log "install: OPENAI_API_KEY not saved; OpenAI Whisper backend will require the key in your environment"
+              fi
+              ;;
+            2)
+              log "install: OPENAI_API_KEY not saved; OpenAI Whisper backend will require the key in your environment"
+              ;;
+            3)
+              continue
+              ;;
+            *)
+              log "install: invalid OPENAI_API_KEY selection '$missing_key_choice' - returning to transcription backend menu"
+              continue
+              ;;
+          esac
+        fi
+
+        upsert_env_var "DISCORD_TRANSCRIBE_BACKEND" "openai-whisper" || return 1
+        upsert_env_var "DISCORD_OPENAI_TRANSCRIBE_MODEL" "$current_model" || return 1
+        log "install: configured OpenAI Whisper transcription backend (model: $current_model)"
+        return 0
+        ;;
+      3)
+        log "install: keeping existing transcription backend ($current_backend)"
+        return 0
+        ;;
+      *)
+        log "install: invalid transcription backend selection '$choice' - keeping current setting ($current_backend)"
+        return 0
+        ;;
+    esac
+  done
 }
 
 register_session_hook() {

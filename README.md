@@ -8,7 +8,7 @@ An upgrade to the [Claude Code](https://claude.com/claude-code) official Discord
 - `scripts/uninstall.sh` restores the original plugin files and removes the SessionStart hook.
 - The install script registers a global **SessionStart hook** so patches are re-applied automatically whenever the plugin cache is refreshed.
 - When Claude Code provides `CLAUDE_PROJECT_DIR` to the plugin process, the patched server tries `./.claude/channels/discord/access.json` for that project first.
-- On gateway connect, the patched server logs the resolved project/channel info and sends a greeting message to each configured Discord channel for that session.
+- On gateway connect, the patched server logs the resolved project/channel info. Startup greetings are only sent for sessions detected as `claude --channels plugin:discord@claude-plugins-official`, with `DISCORD_STARTUP_GREETING` available as a manual override.
 - Voice messages, video files, and PDFs are auto-downloaded on inbound messages so the session can inspect them immediately; other attachments remain on-demand via `download_attachment`.
 
 ### Scope Resolution Order
@@ -58,6 +58,8 @@ This patches the installed Discord plugin in `~/.claude/plugins/cache/claude-plu
 When you run the installer interactively, it also offers a transcription backend menu:
 - `Local whisper-cli` for fully local transcription
 - `OpenAI Whisper API` for better multilingual transcription, using `OPENAI_API_KEY` and `whisper-1`
+- if an `OPENAI_API_KEY` already exists in your shell environment or `~/.claude/channels/discord/.env`, the installer now asks whether to keep it or replace it
+- the OpenAI submenu also includes a `Go back` option so you can switch back to `Local whisper-cli` before applying anything
 
 The installer stores the selection in `~/.claude/channels/discord/.env` via:
 - `DISCORD_TRANSCRIBE_BACKEND=local` or `openai-whisper`
@@ -106,7 +108,7 @@ claude --channels plugin:discord@claude-plugins-official
 When the Discord gateway connects, the patched plugin:
 - logs which config path it is using
 - logs the connected channel IDs for the session
-- sends a greeting message to each configured channel
+- sends a greeting message to each configured channel only for sessions detected as `--channels plugin:discord@claude-plugins-official`
 
 ### 6. Add to `.gitignore`
 
@@ -133,7 +135,7 @@ Use the `/discord:access` skill as usual. The patched skill is scope-aware:
 | Command | Behavior |
 |---------|----------|
 | `/discord:access` | Shows status with scope banner (local/global) |
-| `/discord:access group add <id>` | Prompts for local vs global scope |
+| `/discord:access group add <id>` | Prompts for local/global scope, DM policy, mention requirement, and optional allowFrom IDs |
 | `/discord:access group add <id> --local` | Adds to project-local config |
 | `/discord:access group add <id> --global` | Adds to global config |
 | `/discord:access group rm <id>` | Searches both local and global, removes where found |
@@ -143,7 +145,7 @@ DM-related commands (`pair`, `deny`, `allow`, `remove`, `policy`) always operate
 At session startup, the patched server also:
 - writes the resolved config path to stderr
 - writes the connected channel IDs to stderr
-- sends `Claude Code session connected (project: <name>)` to each configured channel when a project name is available
+- sends `Claude Code session connected (project: <name>)` to each configured channel when the session is detected as channel-enabled and a project name is available
 
 For inbound attachments:
 - voice messages, video files, and PDFs are downloaded automatically into `~/.claude/channels/discord/inbox/` and surfaced in message metadata as readable attachments

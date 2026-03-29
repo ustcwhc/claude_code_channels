@@ -123,7 +123,7 @@ Note: this operation always uses the global access.json (`~/.claude/channels/dis
 1. Validate `<mode>` is one of `pairing`, `allowlist`, `disabled`.
 2. Read `~/.claude/channels/discord/access.json` (create default if missing), set `dmPolicy`, write.
 
-### `group add <channelId>` (optional: `--no-mention`, `--allow id1,id2`, `--local`, `--global`)
+### `group add <channelId>` (optional: `--no-mention`, `--allow id1,id2`, `--local`, `--global`, `--dm-policy <mode>`)
 
 1. Run scope resolution to get PROJECT_DIR and whether the local file exists.
 2. Check for `--local` or `--global` flag in $ARGUMENTS (flags bypass the scope prompt):
@@ -133,14 +133,24 @@ Note: this operation always uses the global access.json (`~/.claude/channels/dis
    - If `--global` is present: TARGET_PATH=`~/.claude/channels/discord/access.json`.
    - If neither flag: continue to step 3 (interactive prompt).
 3. If neither --local nor --global: If PROJECT_DIR is set:
-   a. Ask user: "Add channel `<channelId>` to your project-local config or global config?" — use AskUserQuestion. Default suggestion: "local" (first option, recommended).
+   a. Ask user: "Add channel `<channelId>` to your project-local config or global config?" Default suggestion: local.
    b. If user answers "local": TARGET_PATH=`<PROJECT_DIR>/.claude/channels/discord/access.json`, create dir if needed with `Bash(mkdir -p <PROJECT_DIR>/.claude/channels/discord)`.
    c. If user answers "global": TARGET_PATH=`~/.claude/channels/discord/access.json`.
    If PROJECT_DIR is not set: warn "Note: DISCORD_PROJECT_DIR is not set — project-local scoping unavailable. Writing to global config." TARGET_PATH=`~/.claude/channels/discord/access.json`.
 4. Read TARGET_PATH (create default if missing).
 4a. Duplicate-group check: read the OTHER config file (the one not being written to). If `groups[<channelId>]` exists there too, warn: `⚠ Channel <channelId> also exists in [local/global] config. Local config takes precedence when active.` Continue — do not block.
-5. Set `groups[<channelId>] = { requireMention: !hasFlag("--no-mention"), allowFrom: parsedAllowList }`.
-6. Write to TARGET_PATH (pretty-print, 2-space indent).
+5. Determine the DM policy to store in TARGET_PATH:
+   - If `--dm-policy <mode>` is present, validate `<mode>` is one of `pairing`, `allowlist`, `disabled`, then use it.
+   - Otherwise ask: "For this config, what DM policy do you want?" Suggested default: keep the current `dmPolicy` from TARGET_PATH if present, otherwise `pairing`.
+6. Determine mention behavior:
+   - If `--no-mention` is present: `requireMention=false`.
+   - Otherwise ask: "Should the bot require an @mention in this group channel?" Suggested default: `yes`.
+7. Determine group allowlist:
+   - If `--allow id1,id2` is present, parse it into `parsedAllowList` by splitting on commas, trimming whitespace, and dropping empty entries.
+   - Otherwise ask: "Any allowFrom sender IDs for this group? Provide a comma-separated list, or leave blank for none."
+8. Set `dmPolicy=<selected mode>` on TARGET_PATH.
+9. Set `groups[<channelId>] = { requireMention: <selected boolean>, allowFrom: parsedAllowList }`.
+10. Write to TARGET_PATH (pretty-print, 2-space indent).
 
 ### `group rm <channelId>`
 
