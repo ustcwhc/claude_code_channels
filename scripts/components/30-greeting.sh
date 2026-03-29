@@ -3,7 +3,7 @@
 apply() {
   local plugin_dir="$1"
   local server_ts="$plugin_dir/server.ts"
-  local upgraded_marker='function shouldSendStartupGreeting(): boolean {'
+  local upgraded_marker='typeof STARTUP_STATUS_GREETING === "string" ? STARTUP_STATUS_GREETING : undefined,'
 
   [[ -f "$server_ts" ]] || return 3
   grep -qF "$upgraded_marker" "$server_ts" 2>/dev/null && return 2
@@ -48,9 +48,13 @@ async function sendStartupGreeting(): Promise<void> {
 
   process.stderr.write(\`discord channel: connected channel ids \${channelIds.join(", ")}\\n\`)
   const projectName = PROJECT_DIR ? basename(PROJECT_DIR) : undefined
-  const greeting = projectName
-    ? \`Claude Code session connected (project: \${projectName})\`
-    : '\''Claude Code session connected'\''
+  const greetingParts = [
+    projectName
+      ? \`Claude Code session connected (project: \${projectName})\`
+      : '\''Claude Code session connected'\'',
+    typeof STARTUP_STATUS_GREETING === "string" ? STARTUP_STATUS_GREETING : undefined,
+  ].filter(Boolean)
+  const greeting = greetingParts.join("\\n\\n")
 
   for (const channelId of channelIds) {
     try {

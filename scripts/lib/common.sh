@@ -10,6 +10,10 @@ SETTINGS_PATH="$HOME/.claude/settings.json"
 DISCORD_STATE_DIR="${DISCORD_STATE_DIR:-$HOME/.claude/channels/discord}"
 DISCORD_ENV_PATH="$DISCORD_STATE_DIR/.env"
 INSTALL_SCRIPT_PATH="$SCRIPT_DIR/install.sh"
+AUTO_RESUME_HELPER_PATH="$SCRIPT_DIR/helpers/claude-auto-resume.sh"
+ZSHRC_PATH="${ZDOTDIR:-$HOME}/.zshrc"
+CLAUDE_BIN_PATH="$HOME/.local/bin/claude"
+CLAUDE_BIN_REAL_PATH_FILE="$DISCORD_STATE_DIR/claude-real-binary-path"
 HOOK_TIMEOUT=15
 BACKUP_SUFFIX=".claude-code-channels.orig"
 PLUGIN_DIR=""
@@ -28,6 +32,14 @@ fi
 
 log() {
   echo "discord-channel: $*" >&2
+}
+
+log_error() {
+  if [[ -t 2 ]]; then
+    printf '\033[31mdiscord-channel: %s\033[0m\n' "$*" >&2
+  else
+    echo "discord-channel: $*" >&2
+  fi
 }
 
 run_js() {
@@ -332,4 +344,139 @@ remove_session_hook() {
 
   mv "$temp_settings" "$SETTINGS_PATH"
   log "removed SessionStart hook from $SETTINGS_PATH"
+}
+
+register_claude_wrapper() {
+  mkdir -p "$(dirname "$ZSHRC_PATH")"
+  touch "$ZSHRC_PATH"
+
+  local start_marker="# >>> claude_code_channels auto-resume >>>"
+  local end_marker="# <<< claude_code_channels auto-resume <<<"
+  local snippet
+  snippet="$(cat <<EOF
+$start_marker
+claude() {
+  if [[ -n "\${CLAUDE_CHANNELS_AUTO_RESUME_DISABLE:-}" ]]; then
+    command claude "\$@"
+    return \$?
+  fi
+
+  local helper="$AUTO_RESUME_HELPER_PATH"
+  local real_claude
+  real_claude="\$(readlink "\$HOME/.local/bin/claude" 2>/dev/null || printf '%s' "\$HOME/.local/bin/claude")"
+
+  if [[ -x "\$helper" ]]; then
+    "\$helper" --real-binary "\$real_claude" "\$@"
+  else
+    command claude "\$@"
+  fi
+}
+$end_marker
+EOF
+)"
+
+  ZSHRC_PATH="$ZSHRC_PATH" START_MARKER="$start_marker" END_MARKER="$end_marker" SNIPPET="$snippet" run_js '
+    const fs = require("fs");
+    const path = process.env.ZSHRC_PATH;
+    const startMarker = process.env.START_MARKER;
+    const endMarker = process.env.END_MARKER;
+    const snippet = process.env.SNIPPET;
+
+    const src = fs.existsSync(path) ? fs.readFileSync(path, "utf8") : "";
+    const start = src.indexOf(startMarker);
+    const end = src.indexOf(endMarker);
+    let next = src;
+
+    if (start !== -1 && end !== -1 && end >= start) {
+      next = src.slice(0, start) + snippet + src.slice(end + endMarker.length);
+    } else {
+      next = src.replace(/\s*$/, "");
+      if (next.length > 0) next += "\n\n";
+      next += snippet + "\n";
+    }
+
+    fs.writeFileSync(path, next);
+  ' || return 1
+
+  chmod +x "$AUTO_RESUME_HELPER_PATH" 2>/dev/null || true
+  log "registered zsh claude auto-resume wrapper in $ZSHRC_PATH"
+}
+
+remove_claude_wrapper() {
+  [[ -f "$ZSHRC_PATH" ]] || return 0
+
+  local start_marker="# >>> claude_code_channels auto-resume >>>"
+  local end_marker="# <<< claude_code_channels auto-resume <<<"
+
+  ZSHRC_PATH="$ZSHRC_PATH" START_MARKER="$start_marker" END_MARKER="$end_marker" run_js '
+    const fs = require("fs");
+    const path = process.env.ZSHRC_PATH;
+    const startMarker = process.env.START_MARKER;
+    const endMarker = process.env.END_MARKER;
+
+    const src = fs.readFileSync(path, "utf8");
+    const start = src.indexOf(startMarker);
+    const end = src.indexOf(endMarker);
+    if (start === -1 || end === -1 || end < start) {
+      process.exit(0);
+    }
+
+    const next = (src.slice(0, start) + src.slice(end + endMarker.length)).replace(/\n{3,}/g, "\n\n");
+    fs.writeFileSync(path, next.replace(/\s*$/, "\n"));
+  ' || return 1
+
+  log "removed zsh claude auto-resume wrapper from $ZSHRC_PATH"
+}
+
+register_claude_binary_wrapper() {
+  mkdir -p "$DISCORD_STATE_DIR" "$(dirname "$CLAUDE_BIN_PATH")"
+
+  local real_claude=""
+  if [[ -L "$CLAUDE_BIN_PATH" ]]; then
+    real_claude="$(readlink "$CLAUDE_BIN_PATH" 2>/dev/null || true)"
+  elif [[ -f "$CLAUDE_BIN_REAL_PATH_FILE" ]]; then
+    real_claude="$(cat "$CLAUDE_BIN_REAL_PATH_FILE" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$real_claude" || ! -x "$real_claude" ]]; then
+    log "skipping binary wrapper registration because real Claude binary could not be resolved"
+    return 0
+  fi
+
+  printf '%s\n' "$real_claude" > "$CLAUDE_BIN_REAL_PATH_FILE"
+
+  local temp_wrapper
+  temp_wrapper="$(mktemp)"
+  cat > "$temp_wrapper" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+HELPER="$AUTO_RESUME_HELPER_PATH"
+REAL_BINARY="$(cat "$CLAUDE_BIN_REAL_PATH_FILE" 2>/dev/null || printf '%s' "$real_claude")"
+
+if [[ -x "\$HELPER" && -n "\$REAL_BINARY" ]]; then
+  exec "\$HELPER" --real-binary "\$REAL_BINARY" "\$@"
+fi
+
+exec "$real_claude" "\$@"
+EOF
+
+  chmod +x "$temp_wrapper"
+  mv "$temp_wrapper" "$CLAUDE_BIN_PATH"
+  log "registered claude binary wrapper at $CLAUDE_BIN_PATH"
+}
+
+remove_claude_binary_wrapper() {
+  local real_claude=""
+  if [[ -f "$CLAUDE_BIN_REAL_PATH_FILE" ]]; then
+    real_claude="$(cat "$CLAUDE_BIN_REAL_PATH_FILE" 2>/dev/null || true)"
+  fi
+
+  if [[ -n "$real_claude" && -x "$real_claude" ]]; then
+    rm -f "$CLAUDE_BIN_PATH"
+    ln -s "$real_claude" "$CLAUDE_BIN_PATH"
+    log "restored Claude binary symlink at $CLAUDE_BIN_PATH"
+  fi
+
+  rm -f "$CLAUDE_BIN_REAL_PATH_FILE"
 }

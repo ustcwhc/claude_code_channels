@@ -42,6 +42,8 @@ for target in "${PLUGIN_TARGETS[@]}"; do
 done
 
 remove_session_hook
+remove_claude_wrapper
+remove_claude_binary_wrapper
 
 if [[ "$overall_status" -ne 0 ]]; then
   exit 1

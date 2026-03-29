@@ -5,13 +5,12 @@ apply() {
   local server_ts="$plugin_dir/server.ts"
   local marker_start="// --- claude-code-channels: local-scoping start ---"
   local marker_end="// --- claude-code-channels: local-scoping end ---"
-  local upgraded_marker="function projectDirFromArgv(): string | undefined"
 
   [[ -f "$server_ts" ]] || return 3
-  grep -qF "$upgraded_marker" "$server_ts" 2>/dev/null && return 2
 
   backup_file "$server_ts" || return 3
 
+  local js_status=0
   SERVER_TS="$server_ts" run_js '
     const fs = require("fs");
     const serverPath = process.env.SERVER_TS;
@@ -38,15 +37,20 @@ apply() {
     const resolveBlock = `
 
 // --- claude-code-channels: local-scoping start ---
+function normalizeProjectDir(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.startsWith("--") || trimmed.includes("$" + "{")) return undefined
+  return trimmed
+}
+
 function projectDirFromArgv(): string | undefined {
   const flagIndex = process.argv.indexOf('\''--discord-project-dir'\'')
   if (flagIndex === -1) return undefined
-  const value = process.argv[flagIndex + 1]
-  if (!value || value.startsWith('\''--'\'')) return undefined
-  return value
+  return normalizeProjectDir(process.argv[flagIndex + 1])
 }
 
-const PROJECT_DIR = process.env.DISCORD_PROJECT_DIR || projectDirFromArgv() || undefined
+const PROJECT_DIR = normalizeProjectDir(process.argv[process.argv.indexOf('\''--discord-project-dir'\'') + 1]) || normalizeProjectDir(process.env.DISCORD_PROJECT_DIR) || projectDirFromArgv() || undefined
 
 function resolveAccessFile(): { path: string; scope: '\''local'\'' | '\''global'\'' } {
   if (PROJECT_DIR) {
@@ -79,6 +83,14 @@ process.stderr.write(\`discord channel: using \${ACTIVE_SCOPE} config \${ACTIVE_
       src = src.replace(envAnchor, `${envAnchor}${resolveBlock}`);
     }
 
+    const legacyStart = "\n// discord-local-scoping patch applied\n";
+    const legacyEnd = "\n// Load ~/.claude/channels/discord/.env into process.env. Real env wins.\n";
+    const legacyStartIndex = src.indexOf(legacyStart);
+    const legacyEndIndex = src.indexOf(legacyEnd);
+    if (legacyStartIndex !== -1 && legacyEndIndex !== -1 && legacyEndIndex > legacyStartIndex) {
+      src = src.slice(0, legacyStartIndex) + "\n" + src.slice(legacyEndIndex);
+    }
+
     src = src.replace(
       "const raw = readFileSync(ACCESS_FILE, '\''utf8'\'')",
       "const raw = readFileSync(ACTIVE_ACCESS_FILE, '\''utf8'\'')",
@@ -109,11 +121,16 @@ process.stderr.write(\`discord channel: using \${ACTIVE_SCOPE} config \${ACTIVE_
 
     if (src === fs.readFileSync(serverPath, "utf8")) {
       process.stderr.write("discord-channel: no local scoping changes applied\n");
-      process.exit(3);
+      process.exit(2);
     }
 
     fs.writeFileSync(serverPath, src);
-  ' || return 1
+  ' || js_status=$?
+
+  if [[ "$js_status" -eq 2 ]]; then
+    return 2
+  fi
+  [[ "$js_status" -eq 0 ]] || return 1
 
   return 0
 }

@@ -33,7 +33,7 @@ if ensure_plugin_targets; then
           log "install: $component_name skipped for $target"
           ;;
         *)
-          log "install: $component_name failed for $target"
+          log_error "install: $component_name failed for $target"
           overall_status=1
           ;;
       esac
@@ -50,4 +50,6 @@ if [[ "$overall_status" -ne 0 ]]; then
 fi
 
 register_session_hook
+register_claude_wrapper
+register_claude_binary_wrapper
 log "install: complete"
