@@ -7,6 +7,8 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGIN_BASE="$HOME/.claude/plugins/cache/claude-plugins-official/discord"
 MARKETPLACE_PLUGIN_DIR="$HOME/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/discord"
 SETTINGS_PATH="$HOME/.claude/settings.json"
+DISCORD_STATE_DIR="${DISCORD_STATE_DIR:-$HOME/.claude/channels/discord}"
+DISCORD_ENV_PATH="$DISCORD_STATE_DIR/.env"
 INSTALL_SCRIPT_PATH="$SCRIPT_DIR/install.sh"
 HOOK_TIMEOUT=15
 BACKUP_SUFFIX=".claude-code-channels.orig"
@@ -82,6 +84,86 @@ restore_file() {
 remove_backup() {
   local file="$1"
   rm -f "${file}${BACKUP_SUFFIX}"
+}
+
+read_env_var() {
+  local key="$1"
+  [[ -f "$DISCORD_ENV_PATH" ]] || return 1
+  awk -F= -v key="$key" '$1 == key { print substr($0, index($0, "=") + 1) }' "$DISCORD_ENV_PATH" | tail -1
+}
+
+upsert_env_var() {
+  local key="$1"
+  local value="$2"
+
+  mkdir -p "$DISCORD_STATE_DIR"
+  touch "$DISCORD_ENV_PATH"
+  chmod 600 "$DISCORD_ENV_PATH" 2>/dev/null || true
+
+  DISCORD_ENV_PATH="$DISCORD_ENV_PATH" ENV_KEY="$key" ENV_VALUE="$value" run_js '
+    const fs = require("fs");
+    const envPath = process.env.DISCORD_ENV_PATH;
+    const key = process.env.ENV_KEY;
+    const value = process.env.ENV_VALUE ?? "";
+
+    const lines = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8").split("\n").filter(Boolean) : [];
+    const filtered = lines.filter(line => !line.startsWith(`${key}=`));
+    filtered.push(`${key}=${value}`);
+    fs.writeFileSync(envPath, filtered.join("\n") + "\n", { mode: 0o600 });
+  ' || return 1
+}
+
+configure_transcription_backend() {
+  [[ -t 0 && -t 1 ]] || return 0
+
+  local current_backend
+  current_backend="$(read_env_var "DISCORD_TRANSCRIBE_BACKEND" 2>/dev/null || true)"
+  local current_model
+  current_model="$(read_env_var "DISCORD_OPENAI_TRANSCRIBE_MODEL" 2>/dev/null || true)"
+  [[ -n "$current_backend" ]] || current_backend="local"
+  [[ -n "$current_model" ]] || current_model="whisper-1"
+
+  log "install: choose transcription backend"
+  printf '  1. Local whisper-cli (current: %s)\n' "$([[ "$current_backend" == "local" ]] && echo "selected" || echo "not selected")" >&2
+  printf '  2. OpenAI Whisper API (better multilingual support) (current: %s)\n' "$([[ "$current_backend" == "openai-whisper" ]] && echo "selected" || echo "not selected")" >&2
+  printf '  3. Keep current setting (%s)\n' "$current_backend" >&2
+  printf 'Select [1-3, default 3]: ' >&2
+
+  local choice
+  IFS= read -r choice || return 0
+  choice="${choice:-3}"
+
+  case "$choice" in
+    1)
+      upsert_env_var "DISCORD_TRANSCRIBE_BACKEND" "local" || return 1
+      log "install: configured local whisper-cli transcription backend"
+      ;;
+    2)
+      upsert_env_var "DISCORD_TRANSCRIBE_BACKEND" "openai-whisper" || return 1
+      upsert_env_var "DISCORD_OPENAI_TRANSCRIBE_MODEL" "$current_model" || return 1
+
+      if [[ -z "${OPENAI_API_KEY:-}" ]] && [[ -z "$(read_env_var "OPENAI_API_KEY" 2>/dev/null || true)" ]]; then
+        printf 'OpenAI API key not found in shell env or %s\n' "$DISCORD_ENV_PATH" >&2
+        printf 'Enter OPENAI_API_KEY to save for Discord transcription (leave blank to skip): ' >&2
+        local openai_key
+        IFS= read -r openai_key || true
+        if [[ -n "$openai_key" ]]; then
+          upsert_env_var "OPENAI_API_KEY" "$openai_key" || return 1
+          log "install: saved OPENAI_API_KEY to $DISCORD_ENV_PATH"
+        else
+          log "install: OPENAI_API_KEY not saved; OpenAI Whisper backend will require the key in your environment"
+        fi
+      fi
+
+      log "install: configured OpenAI Whisper transcription backend (model: $current_model)"
+      ;;
+    3)
+      log "install: keeping existing transcription backend ($current_backend)"
+      ;;
+    *)
+      log "install: invalid transcription backend selection '$choice' - keeping current setting ($current_backend)"
+      ;;
+  esac
 }
 
 register_session_hook() {

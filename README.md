@@ -9,6 +9,7 @@ An upgrade to the [Claude Code](https://claude.com/claude-code) official Discord
 - The install script registers a global **SessionStart hook** so patches are re-applied automatically whenever the plugin cache is refreshed.
 - When Claude Code provides `CLAUDE_PROJECT_DIR` to the plugin process, the patched server tries `./.claude/channels/discord/access.json` for that project first.
 - On gateway connect, the patched server logs the resolved project/channel info and sends a greeting message to each configured Discord channel for that session.
+- Voice messages, video files, and PDFs are auto-downloaded on inbound messages so the session can inspect them immediately; other attachments remain on-demand via `download_attachment`.
 
 ### Scope Resolution Order
 
@@ -53,6 +54,15 @@ cd claude_code_channels
 ```
 
 This patches the installed Discord plugin in `~/.claude/plugins/cache/claude-plugins-official/discord/<version>/`, creates backup copies of the original files, and registers the SessionStart hook in `~/.claude/settings.json`.
+
+When you run the installer interactively, it also offers a transcription backend menu:
+- `Local whisper-cli` for fully local transcription
+- `OpenAI Whisper API` for better multilingual transcription, using `OPENAI_API_KEY` and `whisper-1`
+
+The installer stores the selection in `~/.claude/channels/discord/.env` via:
+- `DISCORD_TRANSCRIBE_BACKEND=local` or `openai-whisper`
+- `DISCORD_OPENAI_TRANSCRIBE_MODEL=whisper-1` when OpenAI is selected
+- optionally `OPENAI_API_KEY=...` if you choose to save it there
 
 The installer is **idempotent**:
 - running it again skips already-applied components
@@ -135,6 +145,11 @@ At session startup, the patched server also:
 - writes the connected channel IDs to stderr
 - sends `Claude Code session connected (project: <name>)` to each configured channel when a project name is available
 
+For inbound attachments:
+- voice messages, video files, and PDFs are downloaded automatically into `~/.claude/channels/discord/inbox/` and surfaced in message metadata as readable attachments
+- other attachment types still appear as metadata and can be fetched explicitly with `download_attachment(chat_id, message_id)`
+- when `DISCORD_TRANSCRIBE_BACKEND=openai-whisper`, voice and video audio transcription use OpenAI's transcription API instead of local `whisper-cli`
+
 ## Architecture
 
 ```
@@ -149,7 +164,8 @@ claude_code_channels/
 │       ├── 00-mcp-json.sh            # Inject DISCORD_PROJECT_DIR into .mcp.json
 │       ├── 10-local-scoping.sh       # Patch server.ts for project-local access.json
 │       ├── 20-skill-access.sh        # Install patched access skill
-│       └── 30-greeting.sh            # Session greeting + channel/project logging
+│       ├── 30-greeting.sh            # Session greeting + channel/project logging
+│       └── 40-readable-attachments.sh # Auto-download voice/video/PDF attachments
 ├── patches/
 │   ├── discord-local-scoping.patch   # Reference diff from the earlier approach
 │   └── SKILL.md                      # Full patched access skill with scope-awareness

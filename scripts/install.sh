@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
+configure_transcription_backend
+
 overall_status=0
 if ensure_plugin_targets; then
   for target in "${PLUGIN_TARGETS[@]}"; do
